@@ -1,0 +1,13 @@
+app/src/main/java/ru/fitprogress/ai/MainActivity.kt:74:226: warning: 'val Icons.Filled.DirectionsRun: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.DirectionsRun.
+                listOf(Triple("home", "Главная", Icons.Default.Home), Triple("catalog", "Каталог", Icons.Default.FitnessCenter), Triple("calendar", "План", Icons.Default.CalendarMonth), Triple("running", "Бег", Icons.Default.DirectionsRun), Triple("stats", "Прогресс", Icons.Default.Insights)).forEach { (path, name, icon) ->
+                                                                                                                                                                                                                                 ^^^^^^^^^^^^^
+app/src/main/java/ru/fitprogress/ai/WorkoutTimerService.kt:64:74: warning: 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+                            if(profile.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                                                                         ^^^^^^^^^^^^^^^^
+PASS: Android Kotlin + Compose compilation
+PASS: existing Room v1 generated Java compilation
+PASS: Android test compilation (NOT execution)
+APK: /home/xatabihc/Projects/FitProgressAI/app/build/outputs/apk/debug/app-debug.apk
+Bytes: 60480525
+SHA256: e494edef2f8fbb1710068b8e7457f969348f3a34e19cb7e43c93c89a233ac537
+Gradle build and device execution were NOT verified.

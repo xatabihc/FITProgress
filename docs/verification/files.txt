@@ -1,0 +1,3 @@
+XML: 3 files parsed successfully
+Gradle wrapper: valid ZIP/JAR, executable Unix launcher
+APK exists: False

@@ -12,17 +12,19 @@ data class Exercise(
     val imageUri: String = "", val sets: Int = 3, val reps: Int = 10, val weight: Double = 0.0,
     val seconds: Int = 0, val rest: Int = 60, val notes: String = "", val builtIn: Boolean = false
 )
-data class SetEntry(val id: String = newId(), val reps: Int = 10, val weight: Double = 0.0, val seconds: Int = 0, val done: Boolean = false)
+data class SetEntry(val id: String = newId(), val reps: Int = 10, val weight: Double = 0.0, val seconds: Int = 0, val done: Boolean = false, val type: String = "normal", val distanceMeters: Double = 0.0, val restSeconds: Int? = null, val rpe: Int? = null, val rir: Int? = null, val comment: String = "")
 data class WorkoutItem(val id: String = newId(), val exerciseId: String, val name: String, val sets: List<SetEntry>, val rest: Int = 60, val superset: String = "", val notes: String = "")
 data class Workout(
     val id: String = newId(), val name: String = "Новая тренировка", val date: String = LocalDate.now().toString(),
     val items: List<WorkoutItem> = emptyList(), val notes: String = "", val status: String = "planned",
-    val template: Boolean = false, val program: String = "", val started: Long = 0, val ended: Long = 0,
+    val template: Boolean = false, val recoveryDay: Boolean = false, val program: String = "", val started: Long = 0, val ended: Long = 0,
     val accumulatedMs: Long = 0, val activeSince: Long = 0, val restUntil: Long = 0,
     val effort: Int = 5, val recovery: Int = 7, val pain: Boolean = false,
-    val timerSetId: String = "", val timerUntil: Long = 0, val timerRemaining: Long = 0, val restRemaining: Long = 0
+    val timerSetId: String = "", val timerUntil: Long = 0, val timerRemaining: Long = 0, val restRemaining: Long = 0,
+    val timing: MonotonicTiming? = null, val plan: TrainingPlan? = null, val programDayId: String = ""
 ) {
     fun elapsed(now: Long) = (accumulatedMs + if (status == "active" && activeSince > 0) max(0, now - activeSince) else 0).coerceAtLeast(0)
+    fun completedDate(zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): LocalDate = if(status == "done" && ended > 0) java.time.Instant.ofEpochMilli(ended).atZone(zone).toLocalDate() else LocalDate.parse(date)
     fun volume() = items.sumOf { it.sets.filter { s -> s.done }.sumOf { s -> s.weight * s.reps } }
     fun completedSets() = items.sumOf { it.sets.count { s -> s.done } }
 }
@@ -31,7 +33,7 @@ data class Run(
     val id: String = newId(), val started: Long = System.currentTimeMillis(), val ended: Long = 0,
     val points: List<GeoPoint> = emptyList(), val distance: Double = 0.0, val accumulatedMs: Long = 0,
     val activeSince: Long = System.currentTimeMillis(), val status: String = "active", val segment: Int = 0,
-    val demo: Boolean = false
+    val demo: Boolean = false, val timing: MonotonicTiming? = null, val recordingMode: String = "gps", val movingMs: Long = 0
 ) {
     fun elapsed(now: Long) = (accumulatedMs + if (status == "active") max(0, now - activeSince) else 0).coerceAtLeast(0)
 }
@@ -39,7 +41,7 @@ object Training {
     fun item(e: Exercise) = WorkoutItem(exerciseId = e.id, name = e.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weight, seconds = e.seconds) }, rest = e.rest)
     fun duplicate(w: Workout, date: LocalDate = LocalDate.parse(w.date), template: Boolean = false): Workout = Workout(
         name = w.name, date = date.toString(), items = w.items.map { it.copy(id = newId(), sets = it.sets.map { s -> s.copy(id = newId(), done = false) }) },
-        notes = w.notes, template = template, program = w.program
+        notes = w.notes, template = template, recoveryDay = w.recoveryDay, program = w.program
     )
     fun copyWeek(all: List<Workout>, from: LocalDate, to: LocalDate): List<Workout> = all.filter {
         !it.template && LocalDate.parse(it.date) >= from && LocalDate.parse(it.date) < from.plusDays(7)
@@ -61,35 +63,82 @@ object Gps {
         val dt = (p.time - last.time) / 1000.0
         if (dt <= 0 || dt > 120) return false
         val meters = distance(last, p)
-        return meters >= max(2.0, min(last.accuracy, p.accuracy) * 0.25) && meters / dt <= 12.0
+        return meters >= max(3.0, (last.accuracy + p.accuracy) * 0.5) && meters / dt <= 12.0
     }
     fun pace(distance: Double, ms: Long): Double? = if (distance >= 10 && ms > 0) ms / 60.0 / distance else null // min/km
     fun speed(distance: Double, ms: Long): Double = if (ms > 0) distance * 3600 / ms else 0.0 // km/h
+    fun currentPace(points: List<GeoPoint>, now: Long): Double? {
+        val last = points.lastOrNull() ?: return null
+        if(now - last.time > 20000) return null
+        val recent = points.takeLastWhile { it.segment == last.segment && last.time - it.time <= 30000 }
+        if(recent.size < 2) return null
+        return pace(recent.zipWithNext().sumOf { distance(it.first, it.second) }, last.time - recent.first().time)
+    }
+    data class Split(val distanceMeters: Double, val minutesPerKm: Double)
+    fun splits(points: List<GeoPoint>, splitMeters: Double = 100.0): List<Split> {
+        require(splitMeters > 0)
+        val result = mutableListOf<Split>(); var distanceInSplit = 0.0; var msInSplit = 0.0; var total = 0.0
+        points.zipWithNext().filter { it.first.segment == it.second.segment }.forEach { (a, b) ->
+            var meters = distance(a, b); var ms = (b.time - a.time).toDouble()
+            if(meters > 0 && ms > 0) {
+                while(distanceInSplit + meters >= splitMeters) {
+                    val take = splitMeters - distanceInSplit; val time = ms * take / meters
+                    total += splitMeters; result += Split(total, (msInSplit + time) / 60.0 / splitMeters)
+                    meters -= take; ms -= time; distanceInSplit = 0.0; msInSplit = 0.0
+                }
+                distanceInSplit += meters; msInSplit += ms
+            }
+        }
+        return result
+    }
+    /** Best measured continuous segment, with interpolation at the target distance. */
+    fun bestTime(points: List<GeoPoint>, targetMeters: Double): Long? {
+        require(targetMeters > 0)
+        var best: Double? = null
+        points.groupBy { it.segment }.values.forEach { segment ->
+            val distances = DoubleArray(segment.size)
+            for(i in 1 until segment.size) distances[i] = distances[i - 1] + distance(segment[i - 1], segment[i])
+            var end = 1
+            for(start in segment.indices) {
+                end = max(end, start + 1)
+                while(end < segment.size && distances[end] - distances[start] < targetMeters) end++
+                if(end >= segment.size) break
+                val length = distances[end] - distances[end - 1]
+                if(length <= 0) continue
+                val fraction = (distances[start] + targetMeters - distances[end - 1]) / length
+                val finishTime = segment[end - 1].time + (segment[end].time - segment[end - 1].time) * fraction
+                val duration = finishTime - segment[start].time
+                if(duration > 0 && (best == null || duration < best)) best = duration
+            }
+        }
+        return best?.roundToLong()
+    }
     fun append(r: Run, p: GeoPoint, now: Long): Run {
         if (r.status != "active") return r
         val last = r.points.lastOrNull()
         if(last != null && p.time - last.time > 120000 && valid(p) && abs(now - p.time) <= 20000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
         if(!accept(last, p, now)) return r
         val delta = if (last != null && last.segment == p.segment) distance(last, p) else 0.0
-        return r.copy(points = r.points + p, distance = r.distance + delta)
+        val moving = if(last != null && last.segment == p.segment && p.time - last.time in 1..20000 && delta / ((p.time - last.time) / 1000.0) >= 0.5) p.time - last.time else 0
+        return r.copy(points = r.points + p, distance = r.distance + delta, movingMs = r.movingMs + moving)
     }
 }
 data class Recommendation(val title: String, val reason: String, val factor: Double?)
 interface RecommendationEngine { fun suggest(workouts: List<Workout>, runs: List<Run>): List<Recommendation> }
 class LocalRecommendations : RecommendationEngine {
     override fun suggest(workouts: List<Workout>, runs: List<Run>): List<Recommendation> {
-        val completed = workouts.filter { it.status == "done" }
+        val training = workouts.filter { !it.recoveryDay }; val completed = training.filter { it.status == "done" }
         val danger = completed.any { it.pain || it.recovery <= 3 || it.effort >= 9 }
-        val adherence = if (workouts.isEmpty()) 0.0 else completed.size.toDouble() / workouts.size
+        val adherence = if (training.isEmpty()) 0.0 else completed.size.toDouble() / training.size
         val days = (completed.map { it.date } + runs.filter { it.status == "done" && !it.demo }.map { java.time.Instant.ofEpochMilli(it.started).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString() }).distinct().size
-        val result = mutableListOf(Recommendation("Сохранить нагрузку", if (completed.isEmpty()) "Недостаточно истории для прогрессии. Сначала оцените переносимость текущего плана." else "Выполнено ${completed.size} из ${workouts.size} занятий. Сохранение нагрузки даёт время закрепить технику.", 1.0))
+        val result = mutableListOf(Recommendation("Сохранить нагрузку", if (completed.isEmpty()) "Недостаточно истории для прогрессии. Сначала оцените переносимость текущего плана." else "Выполнено ${completed.size} из ${training.size} занятий. Сохранение нагрузки даёт время закрепить технику.", 1.0))
         if (!danger && adherence >= 0.8 && completed.size >= 2 && days <= 5) result += Recommendation("Небольшая прогрессия", "Выполнено не менее 80% плана, восстановление выше 3/10, нет боли и выраженной усталости. Предлагается +5% веса; без веса — +1 повторение.", 1.05)
         result += Recommendation("Облегчённая неделя", if (danger) "Отмечены боль, низкое восстановление или высокая сложность. Снизьте нагрузку, при боли прекратите провоцирующее упражнение." else if (days > 5) "Менее двух дней отдыха. Предлагается снизить нагрузку на 20%." else "Вариант для восстановления: снизить рабочие веса и повторения на 20%.", 0.8)
         result += Recommendation("Составить вручную", "Вы самостоятельно выбираете занятия и восстановительные дни.", null)
         return result
     }
     fun preview(source: List<Workout>, from: LocalDate, to: LocalDate, factor: Double): List<Workout> = Training.copyWeek(source, from, to).map { w ->
-        w.copy(items = w.items.map { item -> item.copy(sets = item.sets.map { s -> s.copy(weight = (s.weight * factor * 10).roundToInt() / 10.0, reps = if (s.weight == 0.0) max(1, if (factor > 1) s.reps + 1 else (s.reps * factor).roundToInt()) else s.reps) }) })
+        w.copy(items = w.items.map { item -> item.copy(sets = item.sets.map { s -> s.copy(weight = (s.weight * factor * 10).roundToInt() / 10.0, reps = if (s.weight == 0.0 && s.seconds == 0 && s.distanceMeters == 0.0 && factor != 1.0) max(1, if (factor > 1) s.reps + 1 else (s.reps * factor).roundToInt()) else s.reps) }) })
     }
 }
 data class Program(val id: String, val name: String, val direction: String, val level: String, val weeks: Int, val weekdays: List<Int>, val exerciseNames: List<String>, val reps: Int, val sets: Int, val workSeconds: Int = 0, val restSeconds: Int = 60, val advice: String = "Разминка 5–10 минут. Выполняйте без боли, контролируйте технику. Между занятиями — восстановление. Это общий план, а не медицинская рекомендация.")

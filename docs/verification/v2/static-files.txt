@@ -1,0 +1,4 @@
+XML parsed: 3
+Source/docs checked for private-key blocks and common token patterns: 24
+Possible credential material found: false
+Git diff --check: passed

@@ -11,3 +11,7 @@ local.properties
 *.keystore
 .env
 *.log
+
+# Local Python verification cache
+__pycache__/
+*.py[cod]

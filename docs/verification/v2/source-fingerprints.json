@@ -1,0 +1,17 @@
+{
+  "app/src/main/java/ru/fitprogress/ai/AndroidClock.kt": "240a1d79868fd0f4def05ab9bf0eee592de8ef1fa43e202d399ef73b9a675849",
+  "app/src/main/java/ru/fitprogress/ai/BackupCodec.kt": "f3022863c3e1ec0f99c5c4782eb782151a4e8f2662e216cdef34548f2c382eee",
+  "app/src/main/java/ru/fitprogress/ai/Domain.kt": "da7821a18c18215fdb4de9db9f9632418f858d507a30f300270a045b4d541e57",
+  "app/src/main/java/ru/fitprogress/ai/FitViewModel.kt": "b0c37d63176faa7734c3ad410f6d1e53f1dfb8702cea89ed14d065d88bf59425",
+  "app/src/main/java/ru/fitprogress/ai/MainActivity.kt": "27debe79ed4dd3d192033116ad4f2e4b179d21b6c224c1cb9243963327edb68b",
+  "app/src/main/java/ru/fitprogress/ai/ManualRunDialog.kt": "96bb5a9ad30378f65949be32e1c90071706bfb9b26504d750cee113fc296c5f3",
+  "app/src/main/java/ru/fitprogress/ai/MapPanel.kt": "df43ab2780a7b01e10f11b84dd2e329e681f20f887c94a940c88b7f654ae7585",
+  "app/src/main/java/ru/fitprogress/ai/PlanEditorScreen.kt": "e4cdf1e261e62556f3fd16ee5387bce25a62cbd8d0c3533b4377816065a67fa6",
+  "app/src/main/java/ru/fitprogress/ai/RunService.kt": "dfcfcfa097b24c08744f804ea1fd07d4362406dfc2320ed984bba0fa4908b6d2",
+  "app/src/main/java/ru/fitprogress/ai/SessionLogic.kt": "281897febf9a7399b6a406f784ac8d6b63730be28a0675bea44de2e930dc517a",
+  "app/src/main/java/ru/fitprogress/ai/Storage.kt": "25002f1663e73109c2e6367d2889540727065d9dfba70232003e86dc19716ae1",
+  "app/src/main/java/ru/fitprogress/ai/TrainingPlans.kt": "0db732eed1eea38d385f5893e9395b6aa2e16808f983ffd6e3eb851af9504e2a",
+  "app/src/main/java/ru/fitprogress/ai/Visuals.kt": "4c9e81331edde0d6ee432997388f5db7b778d905ee9de7666ab08a530da86cb7",
+  "app/src/main/java/ru/fitprogress/ai/WorkoutTimerService.kt": "86269d22264a584959d9cb22e10584f3d385d6d578051293145cc78098016a48",
+  "app/src/main/AndroidManifest.xml": "07f58674d4629703ba49cf766dabad772c6af7101941d8e8249cd4e6bdf27454"
+}

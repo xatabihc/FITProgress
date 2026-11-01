@@ -20,15 +20,20 @@ class FitViewModel(app: Application) : AndroidViewModel(app) {
     fun notify(text: String) { messages.tryEmit(text) }
     fun create(onCreated: (String) -> Unit) = exclusive { val w = Workout(); repo.save(w); onCreated(w.id) }
     fun update(id: String, block: (Workout) -> Workout) = action { repo.updateWorkout(id, block) }
-    fun addExercise(workout: Workout, exercise: Exercise) = update(workout.id) { it.copy(items = it.items + Training.item(exercise).copy(rest = if(exercise.rest == 60) profile.value.rest else exercise.rest)) }
-    fun start(w: Workout) = update(w.id) { require(it.items.isNotEmpty()) { "Добавьте упражнения" }; Training.resume(it, System.currentTimeMillis()) }
-    fun pause(w: Workout) = update(w.id) { Training.pause(it, System.currentTimeMillis()) }
-    fun completeSet(w: Workout, itemId: String, setId: String, entry: SetEntry) = update(w.id) { current ->
-        require(current.status == "active") { "Продолжите тренировку" }
-        current.copy(items = current.items.map { i -> if(i.id != itemId) i else i.copy(sets = i.sets.map { s -> if(s.id == setId) entry.copy(done = true) else s }) }, timerSetId = "", timerUntil = 0, timerRemaining = 0, restUntil = System.currentTimeMillis() + (current.items.find { it.id == itemId }?.rest ?: 0) * 1000L)
-    }
-    fun finish(w: Workout, effort: Int, recovery: Int, pain: Boolean) = update(w.id) { Training.finish(it, System.currentTimeMillis()).copy(effort = effort, recovery = recovery, pain = pain) }
-    fun duplicate(w: Workout, template: Boolean = false, onCreated: (String) -> Unit = {}) = exclusive { val copy = Training.duplicate(w, template = template).copy(name = w.name + if(template) " · шаблон" else " · копия"); repo.save(copy); onCreated(copy.id) }
+    fun addExercise(workout: Workout, exercise: Exercise) = update(workout.id) { require(it.items.size < 300) { "Не более 300 упражнений" }; it.copy(items = it.items + Training.item(exercise).copy(rest = if(exercise.rest == 60) profile.value.rest else exercise.rest)) }
+    fun stamp() = AndroidClock.read(getApplication())
+    fun start(w: Workout) = action { repo.updateWorkout(w.id) {
+        require(it.items.isNotEmpty() && !it.template && !it.recoveryDay) { "Добавьте упражнения" }
+        SessionTimers.resume(it, stamp())
+    }; try { WorkoutTimerService.start(getApplication()) } catch(e: Exception) { repo.updateWorkout(w.id) { SessionTimers.pause(it, stamp()) }; throw e } }
+    fun pause(w: Workout) = update(w.id) { SessionTimers.pause(it, stamp()) }
+    fun rest(id: String, seconds: Int) = update(id) { SessionTimers.startRest(it, seconds, stamp()) }
+    fun stage(id: String, set: SetEntry) = update(id) { SessionTimers.startStage(it, set, stamp()) }
+    fun completeSet(w: Workout, itemId: String, setId: String, entry: SetEntry) = update(w.id) { SessionEdits.complete(it, itemId, entry.copy(id = setId), stamp()) }
+    fun finish(w: Workout, effort: Int, recovery: Int, pain: Boolean) = update(w.id) { SessionTimers.finish(it, stamp()).copy(effort = effort, recovery = recovery, pain = pain) }
+    fun createPlan(open: (String) -> Unit) = exclusive { val p = TrainingPlan(); repo.save(PlanBuilder.definition(p)); open(p.id) }
+    fun updatePlan(id: String, transform: (TrainingPlan) -> TrainingPlan) = update(id) { w -> val p = transform(requireNotNull(w.plan)); PlanBuilder.validate(p); PlanBuilder.definition(p) }
+    fun duplicate(w: Workout, template: Boolean = false, onCreated: (String) -> Unit = {}) = exclusive { val copy = Training.duplicate(w, date = LocalDate.now(), template = template).copy(name = w.name + if(template) " · шаблон" else " · копия"); repo.save(copy); onCreated(copy.id) }
     fun demo() = exclusive {
         val now = System.currentTimeMillis(); val pts = (0..40).map { i -> GeoPoint(56.83 + i * 0.00005, 60.60 + kotlin.math.sin(i / 6.0) * 0.0002, 5f, now - (40 - i) * 5000) }
         repo.saveRun(Run(started = now - 200000, ended = now, points = pts, distance = pts.zipWithNext().sumOf { Gps.distance(it.first, it.second) }, accumulatedMs = 200000, activeSince = 0, status = "done", demo = true))

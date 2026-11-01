@@ -36,7 +36,7 @@ class RunService : Service() {
             events.trySend {
                 val r = current
                 if(r != null && r.status == "active") {
-                    var next = r
+                    var next: Run = r
                     result.locations.forEach { location ->
                         val point = GeoPoint(location.latitude, location.longitude, location.accuracy, location.time, next.segment)
                         val oldCount = next.points.size
@@ -55,14 +55,14 @@ class RunService : Service() {
         super.onCreate()
         client = LocationServices.getFusedLocationProviderClient(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("run", "Запись пробежки", NotificationManager.IMPORTANCE_LOW))
-        scope.launch { for(event in events) try { event() } catch(e: Exception) { signal.value = "Ошибка GPS: ${e.message ?: "не удалось записать"}"; pauseInternal(); } }
+        scope.launch { for(event in events) try { event() } catch(e: CancellationException) { throw e } catch(e: Exception) { signal.value = "Ошибка GPS: ${e.message ?: "не удалось записать"}"; runCatching { pauseInternal() }; stopSelf() } }
         scope.launch {
             while(isActive) {
                 delay(5000)
                 events.send {
                     current?.takeIf { it.status == "active" }?.let { r ->
                         val now = System.currentTimeMillis()
-                        val next = r.copy(accumulatedMs = r.elapsed(now), activeSince = now)
+                        val next = RunTimers.checkpoint(r, AndroidClock.read(this@RunService))
                         current = next; repo.saveRun(next)
                         if(now - lastFix > 20000) signal.value = "Нет свежего сигнала GPS · расстояние не увеличивается"
                         getSystemService(NotificationManager::class.java).notify(42, notification(next))
@@ -73,7 +73,10 @@ class RunService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // startForeground is immediate, before any database or permission work.
-        if(intent?.action == START || intent?.action == RESUME) startForeground(42, notification(current))
+        if(intent?.action == START || intent?.action == RESUME) {
+            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) { signal.value = "Нужна точная геолокация"; stopSelf(); return START_NOT_STICKY }
+            try { startForeground(42, notification(current)) } catch(e: SecurityException) { signal.value = "Разрешение геолокации отозвано"; stopSelf(); return START_NOT_STICKY }
+        }
         events.trySend {
             (application as FitApp).ready.await()
             when(intent?.action) {
@@ -84,7 +87,7 @@ class RunService : Service() {
                     if(!getSystemService(LocationManager::class.java).isLocationEnabled) { signal.value = "Включите геолокацию в настройках телефона"; stopSelf(); return@trySend }
                     val old = current ?: repo.currentRun()
                     val now = System.currentTimeMillis()
-                    current = old?.copy(status = "active", activeSince = now, segment = old.segment + 1) ?: Run()
+                    current = RunTimers.resume(old ?: Run(status = "paused", activeSince = 0), AndroidClock.read(this@RunService))
                     repo.saveRun(current!!)
                     lastFix = now; signal.value = "Ожидаем точные координаты GPS"; running.value = true
                     wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FitProgress:Run").apply { acquire(12 * 60 * 60 * 1000L) }
@@ -95,7 +98,7 @@ class RunService : Service() {
                 PAUSE -> { if(current == null) current = repo.currentRun(); pauseInternal(); signal.value = "Пробежка на паузе" }
                 FINISH -> {
                     if(current == null) current = repo.currentRun()
-                    current?.takeIf { it.status != "done" }?.let { val now = System.currentTimeMillis(); val done = it.copy(status = "done", ended = now, accumulatedMs = it.elapsed(now), activeSince = 0); repo.saveRun(done); current = done }
+                    current?.takeIf { it.status != "done" }?.let { val now = System.currentTimeMillis(); val done = RunTimers.finish(it, AndroidClock.read(this@RunService)); repo.saveRun(done); current = done }
                     client.removeLocationUpdates(callback); running.value = false; signal.value = "Пробежка сохранена"; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
                 }
                 else -> stopSelf()
@@ -105,7 +108,7 @@ class RunService : Service() {
     }
     private suspend fun pauseInternal() {
         client.removeLocationUpdates(callback)
-        current?.takeIf { it.status == "active" }?.let { val now = System.currentTimeMillis(); current = it.copy(status = "paused", accumulatedMs = it.elapsed(now), activeSince = 0, segment = it.segment + 1); repo.saveRun(current!!) }
+        current?.takeIf { it.status == "active" }?.let { val now = System.currentTimeMillis(); current = RunTimers.pause(it, AndroidClock.read(this@RunService)); repo.saveRun(current!!) }
         if(wakeLock?.isHeld == true) wakeLock?.release(); wakeLock = null; running.value = false
         current?.let { getSystemService(NotificationManager::class.java).notify(42, notification(it)) }
     }
@@ -114,15 +117,15 @@ class RunService : Service() {
         val finish = PendingIntent.getService(this, 2, Intent(this, RunService::class.java).setAction(FINISH), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val pause = PendingIntent.getService(this, 1, Intent(this, RunService::class.java).setAction(PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, "run").setSmallIcon(ru.fitprogress.ai.R.drawable.ic_logo).setContentTitle(if(r?.status == "paused") "Бег на паузе" else "FitProgress · запись GPS")
-            .setContentText(if(r == null) "Подключение GPS…" else "%.2f км · %s".format(r.distance / 1000, formatTime(r.elapsed(System.currentTimeMillis())))).setContentIntent(open).setOngoing(true)
+            .setContentText(if(r == null) "Подключение GPS…" else "%.2f км · %s".format(r.distance / 1000, formatTime(RunTimers.elapsed(r, AndroidClock.read(this))))).setContentIntent(open).setOngoing(true)
             .addAction(0, "Пауза", pause).addAction(0, "Сохранить", finish).build()
     }
     override fun onDestroy() {
         client.removeLocationUpdates(callback)
         if(wakeLock?.isHeld == true) wakeLock?.release()
         running.value = false
-        val id = current?.takeIf { it.status == "active" }?.id
-        if(id != null) (application as FitApp).scope.launch { repo.updateRun(id) { it.copy(status = "paused", activeSince = 0, segment = it.segment + 1) } }
+        val previous = current?.takeIf { it.status == "active" }
+        if(previous != null) (application as FitApp).scope.launch { repo.updateRun(previous.id) { if(it.segment == previous.segment) RunTimers.pause(it, AndroidClock.read(this@RunService)) else it } }
         scope.cancel(); super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
