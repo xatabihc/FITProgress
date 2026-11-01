@@ -53,8 +53,9 @@ class MainActivity : ComponentActivity() {
 private val Accent = Color(0xFFB4F667)
 @Composable fun FitProgress(vm: FitViewModel = viewModel()) {
     val profile by vm.profile.collectAsStateWithLifecycle()
-    val dark = darkColorScheme(primary = Accent, onPrimary = Color(0xFF162309), background = Color(0xFF101410), surface = Color(0xFF191F19), surfaceVariant = Color(0xFF283028))
-    val light = lightColorScheme(primary = Color(0xFF3C6A12), background = Color(0xFFF5F8F1), surface = Color.White)
+    val accent = when(profile.accent) { "cyan" -> Color(0xFF68D8F6); "orange" -> Color(0xFFFFB45B); else -> Accent }
+    val dark = darkColorScheme(primary = accent, onPrimary = Color(0xFF162309), background = Color(0xFF101410), surface = Color(0xFF191F19), surfaceVariant = Color(0xFF283028))
+    val light = lightColorScheme(primary = when(profile.accent) { "cyan" -> Color(0xFF00687B); "orange" -> Color(0xFF8B5000); else -> Color(0xFF3C6A12) }, background = Color(0xFFF5F8F1), surface = Color.White)
     MaterialTheme(colorScheme = if(profile.light) light else dark, typography = Typography()) {
         val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"
         val sessions by vm.workouts.collectAsStateWithLifecycle()
@@ -66,13 +67,13 @@ private val Accent = Color(0xFFB4F667)
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(route !in listOf("home", "catalog", "calendar", "running", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
-                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("Ultimate · 2.0", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress · 2.1", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 IconButton(onClick = { if(route != "settings") nav.navigate("settings") }) { Icon(Icons.Default.Settings, "Настройки") }
             }
         }, bottomBar = {
             NavigationBar {
                 listOf(Triple("home", "Главная", Icons.Default.Home), Triple("catalog", "Каталог", Icons.Default.FitnessCenter), Triple("calendar", "План", Icons.Default.CalendarMonth), Triple("running", "Бег", Icons.Default.DirectionsRun), Triple("stats", "Прогресс", Icons.Default.Insights)).forEach { (path, name, icon) ->
-                    NavigationBarItem(selected = route == path, onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, name) }, label = { Text(name, fontSize = 10.sp, maxLines = 1) })
+                    NavigationBarItem(selected = route == path, onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
                 }
             }
         }) { padding ->
@@ -87,9 +88,12 @@ private val Accent = Color(0xFFB4F667)
                     composable("plan/{id}") { PlanEditorScreen(vm, it.arguments?.getString("id") ?: "") }
                     composable("running") { RunningScreen(vm, { nav.navigate("run/$it") }) }
                     composable("run/{id}") { RunDetail(vm, it.arguments?.getString("id") ?: "") }
-                    composable("stats") { StatsScreen(vm) }
+                    composable("stats") { StatsScreen(vm, { nav.navigate("analysis") }) }
                     composable("settings") { SettingsScreen(vm) }
-                    composable("recommendations") { RecommendationsScreen(vm, { nav.navigate("calendar") }) }
+                    composable("recommendations") { CoachScreen(vm, { nav.navigate("calendar") }) }
+                    composable("goals") { GoalsScreen(vm) }
+                    composable("wellbeing") { WellbeingScreen(vm) }
+                    composable("analysis") { DetailedAnalyticsScreen(vm) }
                 }
                 if(busy) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
             }
@@ -120,6 +124,8 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { Text(if(active != null) "Продолжить тренировку" else "Следующая тренировка", style = MaterialTheme.typography.titleLarge) }
         item { if(next != null) WorkoutCard(next) { open(next.id) } else Empty("Пока нет запланированных занятий. Создайте первую тренировку.") }
         item { Action("Создать тренировку") { vm.create(open) } }
+        item { Action("Персональные цели", Icons.Default.Flag) { navigate("goals") } }
+        item { Action("Дневник самочувствия", Icons.Default.Favorite) { navigate("wellbeing") } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { navigate("programs") }, modifier = Modifier.weight(1f)) { Text("Программы") }; OutlinedButton(onClick = { navigate("catalog") }, modifier = Modifier.weight(1f)) { Text("Упражнения") } } }
         val programs = all.filter { it.program.isNotBlank() && it.status != "done" && !it.template }.groupBy { it.program }
         if(programs.isNotEmpty()) item { Panel { Text("Активные программы", style = MaterialTheme.typography.titleLarge); programs.forEach { (id, list) -> Text("${Catalog.programs.find { it.id == id }?.name ?: id}: ${list.size} занятий впереди") } } }
@@ -371,10 +377,10 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             Metric("Дистанция", "%.2f км".format((current?.distance ?: 0.0) / 1000))
             Metric("Время", formatTime(current?.let { RunTimers.elapsed(it, AndroidClock.read(context)) } ?: 0))
             Column { Metric("Средний темп", formatPace(current?.let { Gps.pace(it.distance, RunTimers.elapsed(it, AndroidClock.read(context))) })); Metric("Скорость, км/ч", "%.1f".format(current?.let { Gps.speed(it.distance, RunTimers.elapsed(it, AndroidClock.read(context))) } ?: 0.0)) }
-            val pace = if(current?.status == "active") Gps.currentPace(current.points, now) else null
+            val pace = if(current?.status == "active") Gps.currentPaceAt(current.points, AndroidClock.read(context)) else null
             Text("Текущий темп: ${formatPace(pace)}"); Text("Текущая скорость: ${pace?.let { "%.1f км/ч".format(60 / it) } ?: "—"}")
         } }
-        if(current != null) item { MapPanel(current.points) }
+        if(current != null) item { UserMap(vm, current.points) }
         if(current?.status != "active") item { Action(if(current == null) "Начать пробежку" else "Продолжить пробежку", Icons.Default.PlayArrow) {
             val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             if(Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
@@ -401,11 +407,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { Title(if(r.demo) "Демо-маршрут" else "Сохранённая пробежка", Instant.ofEpochMilli(r.started).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm", Locale("ru")))) }
         if(r.demo) item { Text("Синтетические координаты. Эта запись исключена из статистики и рекордов.", color = MaterialTheme.colorScheme.primary) }
         item { Panel { Metric("Дистанция", "%.3f км".format(r.distance / 1000)); Metric("Время", formatTime(r.accumulatedMs)); Text("Средний темп: ${formatPace(Gps.pace(r.distance, r.accumulatedMs))}"); Text("Средняя скорость: %.1f км/ч".format(Gps.speed(r.distance, r.accumulatedMs))); Text("GPS-точек: ${r.points.size}"); if(r.recordingMode == "gps") Text("В движении по GPS: ${formatTime(r.movingMs)} (оценка по принятым точкам)") } }
-        if(r.recordingMode == "gps") item { MapPanel(r.points) } else item { Text("Ручная запись: дистанция и время введены пользователем. GPS-маршрут не записывался.") }
+        if(r.recordingMode == "gps") item { UserMap(vm, r.points) } else item { Text("Ручная запись: дистанция и время введены пользователем. GPS-маршрут не записывался.") }
         item { Panel { LineChart(paces, "Темп, мин/км · каждые 100 м дистанции"); Text("По горизонтали — отрезки по 100 м, по вертикали — темп. Паузы исключены; до первых 100 м график пуст.", style = MaterialTheme.typography.bodySmall) } }
     }
 }
-@Composable fun StatsScreen(vm: FitViewModel) {
+@Composable fun StatsScreen(vm: FitViewModel, detailed: () -> Unit) {
     val all by vm.workouts.collectAsStateWithLifecycle(); val runs by vm.runs.collectAsStateWithLifecycle(); val exercises by vm.exercises.collectAsStateWithLifecycle()
     var period by rememberSaveable { mutableStateOf("Месяц") }; var exerciseId by rememberSaveable { mutableStateOf("") }
     val since = when(period) { "Неделя" -> LocalDate.now().minusDays(6); "Месяц" -> LocalDate.now().minusMonths(1); "3 месяца" -> LocalDate.now().minusMonths(3); "Год" -> LocalDate.now().minusYears(1); else -> LocalDate.MIN }
@@ -415,9 +421,10 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     val months = (0..5).map { YearMonth.now().minusMonths((5 - it).toLong()) }
     val usedExercises = done.flatMap { it.items }.distinctBy { it.exerciseId }
     Page {
+        item { Action("Расширенная аналитика", Icons.Default.Insights) { detailed() } }
         item { Title("Твой прогресс", "Только сохранённые результаты · демо исключено") }
         item { Choice(listOf("Неделя", "Месяц", "3 месяца", "Год", "Всё время"), period) { period = it } }
-        item { Panel { Metric("Всего занятий", (done.size + realRuns.size).toString()); Metric("Общая продолжительность", formatTime(duration)); Metric("Силовой объём", "%.0f кг".format(done.sumOf { it.volume() })); Metric("Километраж", "%.2f км".format(distance / 1000)); Text("GPS: %.2f км · вручную: %.2f км".format(gpsDistance / 1000, manualDistance / 1000)); Text("Средний темп: ${formatPace(Gps.pace(distance, realRuns.sumOf { it.accumulatedMs }))}"); val activeDays = (done.map { it.date } + realRuns.map { Instant.ofEpochMilli(it.started).atZone(ZoneId.systemDefault()).toLocalDate().toString() }).distinct().size; Text("Дней с занятиями: $activeDays") } }
+        item { Panel { Metric("Всего занятий", (done.size + realRuns.size).toString()); Metric("Общая продолжительность", formatTime(duration)); Metric("Силовой объём", "%.0f кг".format(done.sumOf { it.volume() })); Metric("Километраж", "%.2f км".format(distance / 1000)); Text("GPS: %.2f км · вручную: %.2f км".format(gpsDistance / 1000, manualDistance / 1000)); Text("Средний темп: ${formatPace(Gps.pace(distance, realRuns.sumOf { it.accumulatedMs }))}"); val activeDays = (done.map { it.completedDate().toString() } + realRuns.map { Instant.ofEpochMilli(it.started).atZone(ZoneId.systemDefault()).toLocalDate().toString() }).distinct().size; Text("Дней с занятиями: $activeDays") } }
         if(done.isEmpty() && realRuns.isEmpty()) item { Empty("В выбранном периоде результатов нет. Завершите тренировку или пробежку.") }
         item { Panel { LineChart(months.map { m -> (done.count { YearMonth.from(it.completedDate()) == m } + realRuns.count { YearMonth.from(Instant.ofEpochMilli(it.started).atZone(ZoneId.systemDefault())) == m }).toDouble() }, "Частота занятий по месяцам"); Text(months.joinToString(" · ") { it.monthValue.toString() }, style = MaterialTheme.typography.labelSmall) } }
         item { Panel { LineChart(months.map { m -> done.filter { YearMonth.from(it.completedDate()) == m }.sumOf { it.volume() } }, "Силовой объём по месяцам, кг") } }
@@ -446,29 +453,30 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var name by rememberSaveable(p.name) { mutableStateOf(p.name) }; var level by rememberSaveable(p.level) { mutableStateOf(p.level) }; var goals by rememberSaveable(p.goals) { mutableStateOf(p.goals) }; var activities by rememberSaveable(p.activities) { mutableStateOf(p.activities) }; var rest by rememberSaveable(p.rest) { mutableStateOf(p.rest.toString()) }
     var delete by remember { mutableStateOf(false) }; var importData by remember { mutableStateOf<Backup?>(null) }; var importCount by remember { mutableStateOf(0) }
     val jsonExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri != null) vm.exclusive {
-        val text = BackupCodec.encode(vm.repo.snapshot()); withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(text) } ?: error("Файл недоступен для записи") }; vm.notify("JSON сохранён")
+        val snapshot = vm.repo.snapshot(); val text = withContext(Dispatchers.Default) { BackupCodec.checkedExport(snapshot) }; withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(text) } ?: error("Файл недоступен для записи") }; vm.notify("JSON сохранён")
     } }
     val csvExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri -> if(uri != null) vm.exclusive {
-        val text = BackupCodec.csv(vm.repo.snapshot()); withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write("\uFEFF"); it.write(text) } ?: error("Файл недоступен для записи") }; vm.notify("CSV сохранён")
+        val snapshot = vm.repo.snapshot(); val text = withContext(Dispatchers.Default) { BackupCodec.csv(snapshot) }; withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write("\uFEFF"); it.write(text) } ?: error("Файл недоступен для записи") }; vm.notify("CSV сохранён")
     } }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) vm.exclusive {
         val text = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { input -> val output = java.io.ByteArrayOutputStream(); val buf = ByteArray(8192); while(true) { val n = input.read(buf); if(n == -1) break; require(output.size() + n <= 20_000_000) { "Файл больше 20 МБ" }; output.write(buf, 0, n) }; output.toString("UTF-8") } ?: error("Не удалось открыть файл") }
-        val b = withContext(Dispatchers.Default) { BackupCodec.decode(text.removePrefix("\uFEFF")) }; importCount = b.exercises.size + b.workouts.size + b.runs.size; importData = b
+        val b = withContext(Dispatchers.Default) { BackupCodec.decode(text.removePrefix("\uFEFF")) }; importCount = b.exercises.size + b.workouts.size + b.runs.size + b.goals.size + b.wellbeing.size; importData = b
     } }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed -> vm.action { vm.repo.saveProfile(p.copy(notifications = allowed)) }; if(!allowed) vm.notify("Уведомления не разрешены") }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed -> vm.action { vm.repo.updateProfile { it.copy(notifications = allowed) } }; if(!allowed) vm.notify("Уведомления не разрешены") }
     Page {
         item { Title("Профиль и настройки", "Без регистрации · данные на вашем устройстве") }
         item { Field("Имя", name, { name = it }) }
         item { Choice(listOf("Новичок", "Любитель", "Продвинутый"), level) { level = it } }
         item { Field("Спортивные цели", goals, { goals = it }, lines = 2) }; item { Field("Предпочтительные активности", activities, { activities = it }) }; item { Field("Отдых по умолчанию, сек", rest, { rest = it }, true) }
-        item { Action("Сохранить профиль", Icons.Default.Save) { val r = rest.toIntOrNull(); if(name.isNotBlank() && name.length <= 80 && r != null && r in 0..3600) vm.action { vm.repo.saveProfile(p.copy(name = name.trim(), level = level, goals = goals, activities = activities, rest = r)); vm.notify("Профиль сохранён") } else vm.notify("Проверьте имя и отдых (0–3600 секунд)") } }
+        item { Action("Сохранить профиль", Icons.Default.Save) { val r = rest.toIntOrNull(); if(name.isNotBlank() && name.length <= 80 && r != null && r in 0..3600) vm.action { vm.repo.updateProfile { it.copy(name = name.trim(), level = level, goals = goals, activities = activities, rest = r) }; vm.notify("Профиль сохранён") } else vm.notify("Проверьте имя и отдых (0–3600 секунд)") } }
         item { Panel {
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Светлая тема", Modifier.weight(1f)); Switch(p.light, { light -> vm.action { vm.repo.saveProfile(p.copy(light = light)) } }) }
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Недельные уведомления", Modifier.weight(1f)); Switch(p.notifications, { enabled -> if(enabled && Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.action { vm.repo.saveProfile(p.copy(notifications = enabled)) } }) }
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Звук таймеров", Modifier.weight(1f)); Switch(p.timerSound, { enabled -> vm.action { vm.repo.saveProfile(p.copy(timerSound = enabled)) } }) }
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Вибрация таймеров", Modifier.weight(1f)); Switch(p.timerVibration, { enabled -> vm.action { vm.repo.saveProfile(p.copy(timerVibration = enabled)) } }) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text("Светлая тема", Modifier.weight(1f)); Switch(p.light, { light -> vm.action { vm.repo.updateProfile { it.copy(light = light) } } }) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text("Недельные уведомления", Modifier.weight(1f)); Switch(p.notifications, { enabled -> if(enabled && Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.action { vm.repo.updateProfile { it.copy(notifications = enabled) } } }) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text("Звук таймеров", Modifier.weight(1f)); Switch(p.timerSound, { enabled -> vm.action { vm.repo.updateProfile { it.copy(timerSound = enabled) } } }) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text("Вибрация таймеров", Modifier.weight(1f)); Switch(p.timerVibration, { enabled -> vm.action { vm.repo.updateProfile { it.copy(timerVibration = enabled) } } }) }
             Text("Единицы: кг, км, мин/км. Таймеры используют сохранённые сроки, поэтому переживают поворот и перезапуск.", style = MaterialTheme.typography.bodySmall)
         } }
+        item { AdditionalSettings(vm) }
         item { Text("Ваши данные", style = MaterialTheme.typography.titleLarge) }
         item { Action("Экспорт резервной копии JSON", Icons.Default.FileDownload) { jsonExport.launch("fitprogress-${LocalDate.now()}.json") } }
         item { Action("Экспорт истории CSV", Icons.Default.TableChart) { csvExport.launch("fitprogress-history-${LocalDate.now()}.csv") } }

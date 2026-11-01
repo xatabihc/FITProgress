@@ -2,7 +2,7 @@
 """Compile/package from existing Gradle intermediates when the Gradle daemon is blocked.
 
 Not a clean build. Requires a previously resolved SDK 35 / Kotlin 2.1.20 project,
-unchanged Room v1 schema and existing merged resources/dependency DEX. No network.
+Room annotation processor dependencies and existing merged resources/dependency DEX. No network.
 The normal supported clean build remains ./gradlew assembleDebug.
 """
 from pathlib import Path
@@ -44,6 +44,9 @@ def main():
     parser.add_argument('--package', action='store_true', help='also create and sign an APK')
     parser.add_argument('--android-tests', action='store_true', help='compile Android tests (does not execute them)')
     args = parser.parse_args()
+    config = (ROOT / 'app/build.gradle.kts').read_text()
+    version_code = int(re.search(r'versionCode\s*=\s*(\d+)', config).group(1))
+    version_name = re.search(r'versionName\s*=\s*"([^"]+)"', config).group(1)
     output = BUILD / 'offline-verification'
     output.mkdir(parents=True, exist_ok=True)
     classes = output / 'classes'
@@ -91,22 +94,24 @@ def main():
     compiler_cmd = ['java', '-Xmx2g', '-cp', os.pathsep.join(map(str, compiler)),
                     'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '17',
                     '-Xplugin=' + str(artifact('org.jetbrains.kotlin', 'kotlin-compose-compiler-plugin-embeddable', '2.1.20'))]
+    (output / 'classpath.txt').write_text(os.pathsep.join(map(str, cp)))
+    run(['python3', ROOT / 'tools/room-codegen.py'])
     sources = sorted((ROOT / 'app/src/main/java').rglob('*.kt'))
     before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     run(compiler_cmd + ['-cp', os.pathsep.join(map(str, cp)), '-d', classes] + sources)
     print('PASS: Android Kotlin + Compose compilation', flush=True)
-    generated = sorted((BUILD / 'generated/source/kapt/debug').rglob('*.java'))
-    assert generated, 'Previously generated Room v1 Java sources are required'
-    schema = ROOT / 'app/schemas/ru.fitprogress.ai.FitDatabase/1.json'
-    assert json.loads(schema.read_text())['database']['identityHash'] == '63d071eabbf9c1eb45970e5d513cfeca', 'Room schema changed; use Gradle/KAPT'
+    generated = sorted((output / 'room/generated').rglob('*.java'))
+    assert generated, 'Room code generation produced no Java sources'
     run(['javac', '-source', '17', '-target', '17', '-cp', os.pathsep.join(map(str, cp + [classes])), '-d', classes] + generated)
-    print('PASS: existing Room v1 generated Java compilation', flush=True)
+    print('PASS: regenerated Room v2 Java compilation', flush=True)
     if args.android_tests:
         testcp = cp + [classes, artifact('junit', 'junit', '4.13.2')]
         run(compiler_cmd + ['-cp', os.pathsep.join(map(str, testcp)), '-d', output / 'android-test-classes'] + sorted((ROOT / 'app/src/androidTest').rglob('*.kt')))
         print('PASS: Android test compilation (NOT execution)', flush=True)
     assert before == {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}, 'Sources changed during compilation; rerun verification'
     fingerprint = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    for schema in sorted((ROOT / 'app/schemas').rglob('*.json')):
+        fingerprint[str(schema.relative_to(ROOT))] = hashlib.sha256(schema.read_bytes()).hexdigest()
     fingerprint['app/src/main/AndroidManifest.xml'] = hashlib.sha256((ROOT / 'app/src/main/AndroidManifest.xml').read_bytes()).hexdigest()
     (output / 'source-fingerprints.json').write_text(json.dumps(fingerprint, indent=2))
     (output / 'classpath.txt').write_text(os.pathsep.join(map(str, cp)))
@@ -130,8 +135,8 @@ def main():
     ET.register_namespace('android', ns)
     tree = ET.parse(INTER / 'merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml')
     manifest = tree.getroot()
-    manifest.set('{' + ns + '}versionCode', '2')
-    manifest.set('{' + ns + '}versionName', '2.0-dev')
+    manifest.set('{' + ns + '}versionCode', str(version_code))
+    manifest.set('{' + ns + '}versionName', version_name)
     # Preserve dependency providers/receivers from the Gradle-merged manifest, replace app declarations from source.
     source = ET.parse(ROOT / 'app/src/main/AndroidManifest.xml').getroot()
     existing = {p.get('{' + ns + '}name') for p in manifest.findall('uses-permission')}
@@ -183,8 +188,8 @@ def main():
         data = json.loads(metadata.read_text())
         for element in data.get('elements', []):
             if element.get('outputFile') == baseline.name:
-                element['versionCode'] = 2
-                element['versionName'] = '2.0-dev'
+                element['versionCode'] = version_code
+                element['versionName'] = version_name
         metadata.write_text(json.dumps(data, indent=2))
     sha = hashlib.sha256(baseline.read_bytes()).hexdigest()
     print(f'APK: {baseline}\nBytes: {baseline.stat().st_size}\nSHA256: {sha}\nGradle build and device execution were NOT verified.')

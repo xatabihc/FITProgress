@@ -18,16 +18,17 @@ import java.time.LocalDate
     val rows by vm.workouts.collectAsStateWithLifecycle(); val catalog by vm.exercises.collectAsStateWithLifecycle()
     val plan = rows.firstOrNull { it.id == id }?.plan
     if(plan == null) { Empty("Загрузка программы…"); return }
-    var week by rememberSaveable(id) { mutableIntStateOf(0) }
+    var selectedWeek by rememberSaveable(id) { mutableIntStateOf(0) }
+    val week = selectedWeek.coerceIn(0, plan.weeks - 1)
+    var jump by rememberSaveable { mutableStateOf(false) }; var repeat by rememberSaveable { mutableStateOf(false) }
     var header by remember { mutableStateOf(false) }; var dayId by rememberSaveable { mutableStateOf<String?>(null) }
     var newDay by rememberSaveable { mutableStateOf(false) }; var draftId by rememberSaveable { mutableStateOf(newId()) }; var apply by remember { mutableStateOf<TrainingPlan?>(null) }
     var copy by remember { mutableStateOf(false) }; var shift by remember { mutableStateOf(false) }; var deleteDay by remember { mutableStateOf<PlanDay?>(null) }
-    week = week.coerceIn(0, plan.weeks - 1)
     Page {
         item { Title(plan.name, "${plan.weeks} недель · начало ${plan.startDate}") }
         item { Text(plan.notes) }
         item { Action("Название, длительность и начало", Icons.Default.Edit) { header = true } }
-        item { Choice((1..plan.weeks).map { "Неделя $it" }, "Неделя ${week + 1}") { week = it.substringAfterLast(' ').toInt() - 1 } }
+        item { Row { IconButton(enabled = week > 0, onClick = { selectedWeek = week - 1 }) { Icon(Icons.Default.ChevronLeft, "Предыдущая неделя") }; TextButton(onClick = { jump = true }, modifier = Modifier.weight(1f)) { Text("Неделя ${week + 1} из ${plan.weeks}") }; IconButton(enabled = week < plan.weeks - 1, onClick = { selectedWeek = week + 1 }) { Icon(Icons.Default.ChevronRight, "Следующая неделя") } } }
         item { Text("${LocalDate.parse(plan.startDate).plusDays(week * 7L)} — ${LocalDate.parse(plan.startDate).plusDays(week * 7L + 6)}") }
         items((0..6).toList(), key = { "day-$it" }) { weekday ->
             val offset = week * 7 + weekday; val sessions = plan.days.filter { it.offset == offset }
@@ -46,9 +47,15 @@ import java.time.LocalDate
         item { Action("Добавить занятие / восстановление") { draftId = newId(); newDay = true } }
         item { OutlinedButton(onClick = { copy = true }) { Text("Копировать выбранную неделю") } }
         item { OutlinedButton(onClick = { vm.updatePlan(id) { PlanBuilder.deload(it, week) } }) { Text("Сделать неделю разгрузочной: −30% подходов") } }
+        item { OutlinedButton(enabled = week < plan.weeks - 1 && plan.days.any { it.offset / 7 == week }, onClick = { repeat = true }) { Text("Повторить неделю до конца программы") } }
         item { OutlinedButton(onClick = { shift = true }) { Text("Сдвинуть расписание целиком") } }
         item { Action("Просмотреть и применить будущий план", Icons.Default.Preview) { apply = plan } }
         item { Text("Редактирование сохраняет определение программы. Календарь меняется только после подтверждения. Завершённые, текущие и прошлые занятия защищены.", style = MaterialTheme.typography.bodySmall) }
+    }
+    if(repeat) Confirm("Заменить будущие недели определения?", "Неделя ${week + 1} будет скопирована во все оставшиеся недели программы. Календарь изменится только после отдельного просмотра и применения.", { repeat = false }) { val source = week; vm.updatePlan(id) { PlanBuilder.repeatThroughEnd(it, source) }; repeat = false }
+    if(jump) {
+        var number by rememberSaveable { mutableStateOf((week + 1).toString()) }; var invalid by remember { mutableStateOf(false) }
+        AlertDialog(onDismissRequest = { jump = false }, title = { Text("Перейти к неделе") }, text = { Column { Field("Номер 1–${plan.weeks}", number, { number = it }, true); if(invalid) Text("Введите номер существующей недели") } }, confirmButton = { TextButton(onClick = { val n = number.toIntOrNull(); if(n != null && n in 1..plan.weeks) { selectedWeek = n - 1; jump = false } else invalid = true }) { Text("Перейти") } }, dismissButton = { TextButton(onClick = { jump = false }) { Text("Отмена") } })
     }
     if(header) {
         var name by rememberSaveable { mutableStateOf(plan.name) }; var weeks by rememberSaveable { mutableStateOf(plan.weeks.toString()) }; var start by rememberSaveable { mutableStateOf(plan.startDate) }; var notes by rememberSaveable { mutableStateOf(plan.notes) }; var error by remember { mutableStateOf("") }
@@ -81,19 +88,26 @@ import java.time.LocalDate
     val saver = remember { Saver<PlanDay, String>(save = { BackupCodec.gson.toJson(it) }, restore = { BackupCodec.gson.fromJson(it, PlanDay::class.java) }) }
     var draft by rememberSaveable(day.id, stateSaver = saver) { mutableStateOf(day) }
     var dayNumber by rememberSaveable(day.id) { mutableStateOf((day.offset + 1).toString()) }
-    var chooser by remember { mutableStateOf(false) }; var selectedItem by remember { mutableStateOf<String?>(null) }; var selectedSet by remember { mutableStateOf<SetEntry?>(null) }; var error by remember { mutableStateOf("") }
+    var settingsId by rememberSaveable { mutableStateOf<String?>(null) }; var chooser by remember { mutableStateOf(false) }; var selectedItem by remember { mutableStateOf<String?>(null) }; var selectedSet by remember { mutableStateOf<SetEntry?>(null) }; var error by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = dismiss, title = { Text("День программы") }, text = { Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Field("Название", draft.name, { draft = draft.copy(name = it) }); Field("День от начала (1–${weeks * 7})", dayNumber, { dayNumber = it }, true)
         Row { Checkbox(draft.recovery, { if(!it || draft.items.isEmpty()) draft = draft.copy(recovery = it) else error = "Сначала удалите упражнения для дня отдыха" }); Text("День восстановления") }
         Field("Тренировочный блок", draft.block, { draft = draft.copy(block = it) }); Field("Заметки", draft.notes, { draft = draft.copy(notes = it) }, lines = 2)
         draft.items.forEach { item ->
             Text(item.name, style = MaterialTheme.typography.titleMedium)
-            item.sets.forEachIndexed { index, s -> TextButton(onClick = { selectedItem = item.id; selectedSet = s }) { Text("${index + 1}: ${s.reps} × ${s.weight} кг · ${s.seconds} сек") } }
+            TextButton(onClick = { settingsId = item.id }) { Text("Отдых, суперсет и заметки") }
+            Row {
+                val position = draft.items.indexOfFirst { it.id == item.id }
+                IconButton(enabled = position > 0, onClick = { val list = draft.items.toMutableList(); java.util.Collections.swap(list, position, position - 1); draft = draft.copy(items = list) }) { Icon(Icons.Default.ArrowUpward, "Выше в программе") }
+                IconButton(enabled = position < draft.items.lastIndex, onClick = { val list = draft.items.toMutableList(); java.util.Collections.swap(list, position, position + 1); draft = draft.copy(items = list) }) { Icon(Icons.Default.ArrowDownward, "Ниже в программе") }
+            }
+            item.sets.forEachIndexed { index, s -> Row { TextButton(onClick = { selectedItem = item.id; selectedSet = s }, modifier = Modifier.weight(1f)) { Text("${index + 1}: ${s.reps} × ${s.weight} кг · ${s.seconds} сек") }; IconButton(enabled = item.sets.size > 1, onClick = { draft = draft.copy(items = draft.items.map { if(it.id == item.id) it.copy(sets = it.sets.filterNot { set -> set.id == s.id }) else it }) }) { Icon(Icons.Default.RemoveCircleOutline, "Удалить подход программы") } } }
             Row { TextButton(onClick = { draft = draft.copy(items = draft.items.map { if(it.id == item.id && it.sets.size < 100) it.copy(sets = it.sets + it.sets.last().copy(id = newId())) else it }) }) { Text("+ Подход") }; TextButton(onClick = { draft = draft.copy(items = draft.items.filterNot { it.id == item.id }) }) { Text("Убрать") } }
         }
         if(!draft.recovery) OutlinedButton(onClick = { chooser = true }) { Text("Добавить упражнение") }
         if(error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
     } }, confirmButton = { TextButton(onClick = { runCatching { draft.copy(offset = dayNumber.toInt() - 1).also { PlanBuilder.validate(TrainingPlan(weeks = weeks, days = listOf(it))) } }.onSuccess(save).onFailure { error = "Проверьте название, номер дня и параметры" } }) { Text("Сохранить день") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
+    draft.items.find { it.id == settingsId }?.let { item -> ItemDialog(item, { settingsId = null }) { updated -> draft = draft.copy(items = draft.items.map { if(it.id == updated.id) updated else it }); settingsId = null } }
     if(chooser) {
         var search by rememberSaveable { mutableStateOf("") }
         AlertDialog(

@@ -31,6 +31,13 @@ object PlanBuilder {
         val copied = p.days.filter { it.offset / 7 == from }.map { it.copy(id = newId(), offset = to * 7 + it.offset % 7, items = it.items.map { i -> i.copy(id = newId(), sets = i.sets.map { s -> s.copy(id = newId(), done = false) }) }) }
         return p.copy(days = p.days.filterNot { it.offset / 7 == to } + copied)
     }
+    fun repeatThroughEnd(p: TrainingPlan, sourceWeek: Int): TrainingPlan {
+        require(sourceWeek in 0 until p.weeks - 1)
+        require(p.days.any { it.offset / 7 == sourceWeek }) { "Исходная неделя пуста" }
+        var result = p
+        for(target in sourceWeek + 1 until p.weeks) result = copyWeek(result, sourceWeek, target)
+        validate(result); return result
+    }
     fun shift(p: TrainingPlan, days: Long): TrainingPlan = p.copy(startDate = LocalDate.parse(p.startDate).plusDays(days).toString())
     fun deload(p: TrainingPlan, week: Int): TrainingPlan = p.copy(days = p.days.map { d -> if(d.offset / 7 != week || d.deload) d else d.copy(deload = true, items = d.items.map { i -> i.copy(sets = i.sets.take((i.sets.size * 0.7).toInt().coerceAtLeast(1))) }) })
     fun fromWorkouts(name: String, workouts: List<Workout>, start: LocalDate, weeks: Int): TrainingPlan = TrainingPlan(name = name, weeks = weeks, startDate = start.toString(), days = workouts.filter { !it.template }.map { w ->

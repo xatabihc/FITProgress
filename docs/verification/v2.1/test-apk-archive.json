@@ -1,0 +1,6 @@
+{
+  "original": "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
+  "archived": "app/build/outputs/apk/androidTest/debug/obsolete-before-2.1/app-debug-androidTest.apk",
+  "sha256": "316fd66363b4e9521404834dc9bcdec3c8a89a25dc10bf44ebff181226206556",
+  "reason": "Old test runner does not isolate production data; rebuild connectedDebugAndroidTest with FitTestRunner"
+}

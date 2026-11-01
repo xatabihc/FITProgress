@@ -6,6 +6,9 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.*
+import android.media.AudioManager
+import android.media.ToneGenerator
+import kotlinx.coroutines.flow.first
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.ConnectionResult
@@ -30,6 +33,7 @@ class RunService : Service() {
     private lateinit var client: FusedLocationProviderClient
     private var current: Run? = null
     private var lastFix = 0L
+    private var wakeUntil = 0L
     private var wakeLock: PowerManager.WakeLock? = null
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -38,14 +42,27 @@ class RunService : Service() {
                 if(r != null && r.status == "active") {
                     var next: Run = r
                     result.locations.forEach { location ->
-                        val point = GeoPoint(location.latitude, location.longitude, location.accuracy, location.time, next.segment)
+                        if(!location.hasAccuracy()) { signal.value = "GPS без оценки точности: точка отклонена"; return@forEach }
+                        if(location.isFromMockProvider) { signal.value = "Тестовые координаты Android не входят в реальную историю GPS"; return@forEach }
+                        val stamp = AndroidClock.read(this@RunService)
+                        val point = GeoPoint(location.latitude, location.longitude, location.accuracy, location.time, next.segment, location.elapsedRealtimeNanos / 1_000_000L, stamp.boot)
                         val oldCount = next.points.size
-                        next = Gps.append(next, point, System.currentTimeMillis())
-                        if(next.points.size > oldCount) { lastFix = System.currentTimeMillis(); signal.value = "GPS · точность ±${location.accuracy.toInt()} м" }
+                        next = Gps.appendAt(next, point, stamp)
+                        if(Gps.valid(point) && Gps.age(point, stamp) in 0L..20000L) { lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "GPS · ±${location.accuracy.toInt()} м · фильтрация шума" }
+                        if(next.points.size > oldCount) { lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "GPS · точность ±${location.accuracy.toInt()} м" }
                         else if(location.accuracy > 35) signal.value = "Низкая точность GPS · выйдите на открытое место"
                     }
+                    val km = (next.distance / 1000).toInt()
+                    val announce = km > next.lastAnnouncedKm
+                    next = next.copy(lastAnnouncedKm = maxOf(next.lastAnnouncedKm, km))
                     current = next
                     if(next != r) repo.saveRun(next)
+                    if(announce && repo.profile.first().runSignals) {
+                        val p = repo.profile.first()
+                        if(p.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                        if(p.timerSound) { val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75); tone.startTone(ToneGenerator.TONE_PROP_BEEP, 500); scope.launch { try { delay(700) } finally { tone.release() } } }
+                        signal.value = "Отсечка: $km км GPS"
+                    }
                 }
             }
         }
@@ -62,9 +79,11 @@ class RunService : Service() {
                 events.send {
                     current?.takeIf { it.status == "active" }?.let { r ->
                         val now = System.currentTimeMillis()
+                        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED || !getSystemService(LocationManager::class.java).isLocationEnabled) { signal.value = "Геолокация отключена или разрешение отозвано"; pauseInternal(); return@send }
+                        acquireRunWakeLock()
                         val next = RunTimers.checkpoint(r, AndroidClock.read(this@RunService))
                         current = next; repo.saveRun(next)
-                        if(now - lastFix > 20000) signal.value = "Нет свежего сигнала GPS · расстояние не увеличивается"
+                        if(android.os.SystemClock.elapsedRealtime() - lastFix > 20000) signal.value = "Нет свежего сигнала GPS · расстояние не увеличивается"
                         getSystemService(NotificationManager::class.java).notify(42, notification(next))
                     }
                 }
@@ -89,8 +108,8 @@ class RunService : Service() {
                     val now = System.currentTimeMillis()
                     current = RunTimers.resume(old ?: Run(status = "paused", activeSince = 0), AndroidClock.read(this@RunService))
                     repo.saveRun(current!!)
-                    lastFix = now; signal.value = "Ожидаем точные координаты GPS"; running.value = true
-                    wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FitProgress:Run").apply { acquire(12 * 60 * 60 * 1000L) }
+                    lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "Ожидаем точные координаты GPS"; running.value = true
+                    acquireRunWakeLock()
                     val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L).setMinUpdateIntervalMillis(1000).setMaxUpdateDelayMillis(5000).setWaitForAccurateLocation(true).build()
                     try { client.requestLocationUpdates(request, callback, Looper.getMainLooper()).addOnFailureListener { error -> events.trySend { signal.value = "GPS: ${error.message}"; pauseInternal() } } }
                     catch(e: SecurityException) { signal.value = "Разрешение геолокации отозвано"; pauseInternal() }
@@ -105,6 +124,13 @@ class RunService : Service() {
             }
         }
         return START_NOT_STICKY // A killed service is recovered as paused, never as silently recording.
+    }
+    private fun acquireRunWakeLock() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if(wakeLock?.isHeld == true && now < wakeUntil - 30000) return
+        if(wakeLock?.isHeld == true) wakeLock?.release()
+        wakeUntil = now + 60 * 60 * 1000L
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FitProgress:Run").apply { acquire(60 * 60 * 1000L) }
     }
     private suspend fun pauseInternal() {
         client.removeLocationUpdates(callback)

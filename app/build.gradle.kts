@@ -11,9 +11,9 @@ android {
         applicationId = "ru.fitprogress.ai"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0-dev"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 3
+        versionName = "2.1-dev"
+        testInstrumentationRunner = "ru.fitprogress.ai.FitTestRunner"
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -42,6 +42,7 @@ dependencies {
     implementation("org.maplibre.gl:android-sdk:11.8.0")
     implementation("com.google.code.gson:gson:2.11.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.xerial:sqlite-jdbc:3.41.2.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test:runner:1.6.2")

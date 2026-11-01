@@ -13,7 +13,7 @@ data class Exercise(
     val seconds: Int = 0, val rest: Int = 60, val notes: String = "", val builtIn: Boolean = false
 )
 data class SetEntry(val id: String = newId(), val reps: Int = 10, val weight: Double = 0.0, val seconds: Int = 0, val done: Boolean = false, val type: String = "normal", val distanceMeters: Double = 0.0, val restSeconds: Int? = null, val rpe: Int? = null, val rir: Int? = null, val comment: String = "")
-data class WorkoutItem(val id: String = newId(), val exerciseId: String, val name: String, val sets: List<SetEntry>, val rest: Int = 60, val superset: String = "", val notes: String = "")
+data class WorkoutItem(val id: String = newId(), val exerciseId: String, val name: String, val sets: List<SetEntry>, val rest: Int = 60, val superset: String = "", val notes: String = "", val muscleGroup: String? = null)
 data class Workout(
     val id: String = newId(), val name: String = "Новая тренировка", val date: String = LocalDate.now().toString(),
     val items: List<WorkoutItem> = emptyList(), val notes: String = "", val status: String = "planned",
@@ -28,17 +28,17 @@ data class Workout(
     fun volume() = items.sumOf { it.sets.filter { s -> s.done }.sumOf { s -> s.weight * s.reps } }
     fun completedSets() = items.sumOf { it.sets.count { s -> s.done } }
 }
-data class GeoPoint(val lat: Double, val lon: Double, val accuracy: Float, val time: Long, val segment: Int = 0)
+data class GeoPoint(val lat: Double, val lon: Double, val accuracy: Float, val time: Long, val segment: Int = 0, val elapsedMs: Long? = null, val boot: Long? = null)
 data class Run(
     val id: String = newId(), val started: Long = System.currentTimeMillis(), val ended: Long = 0,
     val points: List<GeoPoint> = emptyList(), val distance: Double = 0.0, val accumulatedMs: Long = 0,
     val activeSince: Long = System.currentTimeMillis(), val status: String = "active", val segment: Int = 0,
-    val demo: Boolean = false, val timing: MonotonicTiming? = null, val recordingMode: String = "gps", val movingMs: Long = 0
+    val demo: Boolean = false, val timing: MonotonicTiming? = null, val recordingMode: String = "gps", val movingMs: Long = 0, val lastAnnouncedKm: Int = 0
 ) {
     fun elapsed(now: Long) = (accumulatedMs + if (status == "active") max(0, now - activeSince) else 0).coerceAtLeast(0)
 }
 object Training {
-    fun item(e: Exercise) = WorkoutItem(exerciseId = e.id, name = e.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weight, seconds = e.seconds) }, rest = e.rest)
+    fun item(e: Exercise) = WorkoutItem(exerciseId = e.id, name = e.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weight, seconds = e.seconds) }, rest = e.rest, muscleGroup = e.category)
     fun duplicate(w: Workout, date: LocalDate = LocalDate.parse(w.date), template: Boolean = false): Workout = Workout(
         name = w.name, date = date.toString(), items = w.items.map { it.copy(id = newId(), sets = it.sets.map { s -> s.copy(id = newId(), done = false) }) },
         notes = w.notes, template = template, recoveryDay = w.recoveryDay, program = w.program
@@ -57,10 +57,21 @@ object Gps {
         return 6371000 * 2 * atan2(sqrt(h.coerceIn(0.0, 1.0)), sqrt((1 - h).coerceIn(0.0, 1.0)))
     }
     fun valid(p: GeoPoint) = p.lat.isFinite() && p.lon.isFinite() && p.lat in -90.0..90.0 && p.lon in -180.0..180.0 && p.accuracy.isFinite() && p.accuracy in 0f..35f && p.time > 0
+    fun durationBetween(a: GeoPoint, b: GeoPoint): Long = if(a.elapsedMs != null && b.elapsedMs != null && a.boot != null && a.boot == b.boot) b.elapsedMs - a.elapsedMs else b.time - a.time
+    fun age(p: GeoPoint, now: ClockStamp): Long = if(p.elapsedMs != null && p.boot == now.boot) now.elapsedMs - p.elapsedMs else now.wallMs - p.time
+    fun appendAt(r: Run, point: GeoPoint, now: ClockStamp): Run {
+        if(point.boot != null && point.boot != now.boot || age(point, now) !in -1000L..20000L) return r
+        return append(r, point, point.time)
+    }
+    fun currentPaceAt(points: List<GeoPoint>, now: ClockStamp): Double? {
+        val last = points.lastOrNull() ?: return null
+        if(age(last, now) !in 0L..20000L) return null
+        return currentPace(points, last.time)
+    }
     fun accept(last: GeoPoint?, p: GeoPoint, now: Long): Boolean {
         if (!valid(p) || abs(now - p.time) > 20_000) return false
         if (last == null || last.segment != p.segment) return true
-        val dt = (p.time - last.time) / 1000.0
+        val dt = durationBetween(last, p) / 1000.0
         if (dt <= 0 || dt > 120) return false
         val meters = distance(last, p)
         return meters >= max(3.0, (last.accuracy + p.accuracy) * 0.5) && meters / dt <= 12.0
@@ -70,16 +81,16 @@ object Gps {
     fun currentPace(points: List<GeoPoint>, now: Long): Double? {
         val last = points.lastOrNull() ?: return null
         if(now - last.time > 20000) return null
-        val recent = points.takeLastWhile { it.segment == last.segment && last.time - it.time <= 30000 }
+        val recent = points.takeLastWhile { it.segment == last.segment && durationBetween(it, last) in 0L..30000L }
         if(recent.size < 2) return null
-        return pace(recent.zipWithNext().sumOf { distance(it.first, it.second) }, last.time - recent.first().time)
+        return pace(recent.zipWithNext().sumOf { distance(it.first, it.second) }, durationBetween(recent.first(), last))
     }
     data class Split(val distanceMeters: Double, val minutesPerKm: Double)
     fun splits(points: List<GeoPoint>, splitMeters: Double = 100.0): List<Split> {
         require(splitMeters > 0)
         val result = mutableListOf<Split>(); var distanceInSplit = 0.0; var msInSplit = 0.0; var total = 0.0
         points.zipWithNext().filter { it.first.segment == it.second.segment }.forEach { (a, b) ->
-            var meters = distance(a, b); var ms = (b.time - a.time).toDouble()
+            var meters = distance(a, b); var ms = durationBetween(a, b).toDouble()
             if(meters > 0 && ms > 0) {
                 while(distanceInSplit + meters >= splitMeters) {
                     val take = splitMeters - distanceInSplit; val time = ms * take / meters
@@ -96,8 +107,8 @@ object Gps {
         require(targetMeters > 0)
         var best: Double? = null
         points.groupBy { it.segment }.values.forEach { segment ->
-            val distances = DoubleArray(segment.size)
-            for(i in 1 until segment.size) distances[i] = distances[i - 1] + distance(segment[i - 1], segment[i])
+            val distances = DoubleArray(segment.size); val times = DoubleArray(segment.size)
+            for(i in 1 until segment.size) { distances[i] = distances[i - 1] + distance(segment[i - 1], segment[i]); times[i] = times[i - 1] + durationBetween(segment[i - 1], segment[i]).coerceAtLeast(0) }
             var end = 1
             for(start in segment.indices) {
                 end = max(end, start + 1)
@@ -106,8 +117,8 @@ object Gps {
                 val length = distances[end] - distances[end - 1]
                 if(length <= 0) continue
                 val fraction = (distances[start] + targetMeters - distances[end - 1]) / length
-                val finishTime = segment[end - 1].time + (segment[end].time - segment[end - 1].time) * fraction
-                val duration = finishTime - segment[start].time
+                val finishTime = times[end - 1] + (times[end] - times[end - 1]) * fraction
+                val duration = finishTime - times[start]
                 if(duration > 0 && (best == null || duration < best)) best = duration
             }
         }
@@ -116,10 +127,10 @@ object Gps {
     fun append(r: Run, p: GeoPoint, now: Long): Run {
         if (r.status != "active") return r
         val last = r.points.lastOrNull()
-        if(last != null && p.time - last.time > 120000 && valid(p) && abs(now - p.time) <= 20000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
+        if(last != null && durationBetween(last, p) > 120000 && valid(p) && abs(now - p.time) <= 20000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
         if(!accept(last, p, now)) return r
         val delta = if (last != null && last.segment == p.segment) distance(last, p) else 0.0
-        val moving = if(last != null && last.segment == p.segment && p.time - last.time in 1..20000 && delta / ((p.time - last.time) / 1000.0) >= 0.5) p.time - last.time else 0
+        val moving = if(last != null && last.segment == p.segment && durationBetween(last, p) in 1..20000 && delta / (durationBetween(last, p) / 1000.0) >= 0.5) durationBetween(last, p) else 0
         return r.copy(points = r.points + p, distance = r.distance + delta, movingMs = r.movingMs + moving)
     }
 }

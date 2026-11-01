@@ -1,0 +1,5 @@
+XML parsed
+Git diff --check passed
+Common private-key/token patterns absent in selected source/tool/docs files
+No destructive migration fallback in production Kotlin
+Custom test runner configured; production-data reset guard present (static check only)

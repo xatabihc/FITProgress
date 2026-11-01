@@ -9,7 +9,24 @@ import org.junit.Test
 
 class MainFlowTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
-    @Before fun reset() { ui.activityRule.scenario.onActivity { activity -> runBlocking { (activity.application as FitApp).ready.await(); (activity.application as FitApp).repository.erase() } }; ui.waitForIdle() }
+    @Before fun reset() {
+        lateinit var app: FitApp
+        ui.activityRule.scenario.onActivity { activity ->
+            app = activity.application as FitApp
+            check(app.isolatedTestStorage) { "Refusing to erase production data: use FitTestRunner" }
+            app.stopService(android.content.Intent(app, RunService::class.java))
+            app.stopService(android.content.Intent(app, WorkoutTimerService::class.java))
+        }
+        ui.waitForIdle()
+        runBlocking {
+            app.ready.await()
+            val stamp = AndroidClock.read(app)
+            app.repository.snapshot().workouts.filter { it.status in listOf("active", "paused") }.forEach { w -> app.repository.updateWorkout(w.id) { SessionTimers.finish(it, stamp) } }
+            app.repository.currentRun()?.let { r -> app.repository.updateRun(r.id) { RunTimers.finish(it, stamp) } }
+            app.repository.erase()
+        }
+        ui.waitForIdle()
+    }
     private fun scroll(text: String) { ui.onNodeWithTag("page").performScrollToNode(hasText(text, substring = false)) }
     @Test fun createAndRenameExercise() {
         ui.onNodeWithContentDescription("Каталог").performClick()
@@ -50,6 +67,20 @@ class MainFlowTest {
         ui.onNodeWithText("Подтвердить изменения").performClick(); ui.waitForIdle()
         ui.onNodeWithContentDescription("План").performClick(); ui.waitForIdle()
         scroll("Тренировка"); ui.onNodeWithText("Тренировка").assertIsDisplayed()
+    }
+
+    @Test fun createGoalAndDiarySurviveActivityRecreation() {
+        scroll("Персональные цели"); ui.onNodeWithText("Персональные цели").performClick(); ui.waitForIdle()
+        ui.onNodeWithText("Добавить цель").performClick()
+        ui.onNodeWithText("Название").performTextInput("Три тренировки")
+        ui.onNodeWithText("Сохранить цель").performClick(); ui.waitForIdle()
+        scroll("Три тренировки"); ui.onNodeWithText("Три тренировки").assertIsDisplayed()
+        ui.activityRule.scenario.recreate(); ui.waitForIdle()
+        scroll("Три тренировки"); ui.onNodeWithText("Три тренировки").assertIsDisplayed()
+        ui.onNodeWithContentDescription("Главная").performClick(); ui.waitForIdle()
+        scroll("Дневник самочувствия"); ui.onNodeWithText("Дневник самочувствия").performClick()
+        ui.onNodeWithText("Заполнить дневник").performClick(); ui.onNodeWithText("Сохранить дневник").performClick(); ui.waitForIdle()
+        scroll("Изменить запись"); ui.onNodeWithText("Изменить запись").assertIsDisplayed()
     }
 
 }

@@ -1,6 +1,7 @@
 package ru.fitprogress.ai
 
 import androidx.room.Room
+import androidx.datastore.preferences.core.*
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -66,6 +67,55 @@ class RepositoryTest {
         val shifted = PlanBuilder.shift(p, 7); repo.save(PlanBuilder.definition(shifted)); repo.applyPlan(p.id, shifted, java.time.LocalDate.now())
         assertEquals(before, repo.workouts.first().first { it.id == session.id })
         assertEquals(2, repo.workouts.first().size)
+    }
+
+    @Test fun roomMigrationFromVersionOnePreservesHistoryAndAddsPersonalRecords() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext; val filename = "migration-${newId()}.db"
+        val w = Workout(name = "История до 2.1", items = listOf(Training.item(Catalog.exercises.first())))
+        val payload = BackupCodec.gson.toJson(w)
+        val legacy = context.openOrCreateDatabase(filename, 0, null)
+        for(table in listOf("exercises", "workouts", "runs")) legacy.execSQL("CREATE TABLE IF NOT EXISTS `$table` (`id` TEXT NOT NULL, `payload` TEXT NOT NULL, PRIMARY KEY(`id`))")
+        legacy.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+        legacy.execSQL("INSERT OR REPLACE INTO room_master_table VALUES (42,'63d071eabbf9c1eb45970e5d513cfeca')")
+        legacy.execSQL("INSERT INTO workouts VALUES (?,?)", arrayOf(w.id, payload)); legacy.version = 1; legacy.close()
+        val migrated = Room.databaseBuilder(context, FitDatabase::class.java, filename).addMigrations(MIGRATION_1_2).build()
+        try {
+            val r = Repository(migrated, context)
+            assertEquals(payload, migrated.dao().allWorkouts().single().payload)
+            assertEquals(w, r.workouts.first().single())
+            assertTrue(migrated.dao().allPersonal().isEmpty())
+            val goal = SportGoal(title = "Три занятия"); r.saveGoal(goal)
+            r.saveWellbeing(Wellbeing())
+            assertEquals(goal, r.goals.first().single()); assertEquals(1, r.wellbeing.first().size)
+        } finally { migrated.close(); context.deleteDatabase(filename) }
+    }
+    @Test fun personalBackupImportDoesNotOverwriteOrDuplicateRecords() = runBlocking {
+        val goal = SportGoal(title = "Моя цель"); val entry = Wellbeing(comment = "Оригинал")
+        repo.saveGoal(goal); repo.saveWellbeing(entry)
+        val b = BackupCodec.decode(BackupCodec.encode(Backup(goals = listOf(goal.copy(title = "Из файла")), wellbeing = listOf(entry.copy(comment = "Из файла")))) )
+        repo.restore(b); repo.restore(b)
+        assertEquals(goal, repo.goals.first().single()); assertEquals(entry, repo.wellbeing.first().single())
+    }
+    @Test fun applyingCoachTwiceDoesNotDuplicateNextWeek() = runBlocking {
+        val today = java.time.LocalDate.now(); val start = weekOf(today).minusWeeks(1)
+        val old = Workout(date = start.toString(), items = listOf(Training.item(Catalog.exercises.first())))
+        repo.save(old)
+        val engine = AdaptiveCoach(); val snapshot = repo.snapshot(); val option = engine.options(snapshot.workouts, snapshot.runs, snapshot.wellbeing, today).first { it.id == "maintain" }
+        val preview = engine.preview(option, snapshot.workouts, today)
+        repo.applyCoach(preview, snapshot)
+        val before = repo.snapshot(); assertEquals(2, before.workouts.size)
+        assertTrue(runCatching { repo.applyCoach(preview, before) }.isFailure)
+        assertEquals(before.workouts, repo.snapshot().workouts)
+    }
+
+    @Test fun oldDataStoreKeysRemainReadableAndUpdatesAreAtomic() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext; val previous = context.settingsStore.data.first()
+        try {
+            context.settingsStore.edit { it.clear(); it[stringPreferencesKey("name")] = "Имя из 2.0"; it[booleanPreferencesKey("light")] = true }
+            val old = repo.profile.first(); assertEquals("Имя из 2.0", old.name); assertTrue(old.light); assertFalse(old.reminders)
+            repo.updateProfile { it.copy(accent = "cyan") }; repo.updateProfile { it.copy(timerSound = false) }
+            val updated = repo.profile.first(); assertEquals("cyan", updated.accent); assertFalse(updated.timerSound); assertEquals(old.name, updated.name); assertTrue(updated.light)
+        } finally { context.settingsStore.updateData { previous } }
     }
 
 }
