@@ -1,0 +1,21 @@
+warning: language version 1.9 is deprecated in JVM and its support will be removed in a future version of Kotlin. Update the version to 2.1.
+KAPT exit 0
+app/src/main/java/ru/fitprogress/ai/MainActivity.kt:87:226: warning: 'val Icons.Filled.DirectionsRun: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.DirectionsRun.
+                listOf(Triple("home", "Главная", Icons.Default.Home), Triple("catalog", "Каталог", Icons.Default.FitnessCenter), Triple("calendar", "План", Icons.Default.CalendarMonth), Triple("running", "Бег", Icons.Default.DirectionsRun), Triple("stats", "Прогресс", Icons.Default.Insights)).forEach { (path, name, icon) ->
+                                                                                                                                                                                                                                 ^^^^^^^^^^^^^
+app/src/main/java/ru/fitprogress/ai/RunService.kt:64:37: warning: 'val isFromMockProvider: Boolean' is deprecated. Deprecated in Java.
+                        if(location.isFromMockProvider) { signal.value = "Тестовые координаты Android не входят в реальную историю GPS"; return@forEach }
+                                    ^^^^^^^^^^^^^^^^^^
+app/src/main/java/ru/fitprogress/ai/RunService.kt:80:64: warning: 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+                        if(p.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                                                               ^^^^^^^^^^^^^^^^
+app/src/main/java/ru/fitprogress/ai/WorkoutTimerService.kt:76:74: warning: 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+                            if(profile.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                                                                         ^^^^^^^^^^^^^^^^
+PASS: Android Kotlin + Compose compilation
+PASS: regenerated Room v2 Java compilation
+PASS: Android test compilation (NOT execution)
+APK: /home/xatabihc/Projects/FitProgressAI/app/build/outputs/apk/debug/app-debug.apk
+Bytes: 60787875
+SHA256: a2070f1d4cda71945fc9c82f0e5adf89c1c0ed313fbf83f961187f1d696d9206
+Gradle build and device execution were NOT verified.

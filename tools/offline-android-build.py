@@ -112,6 +112,9 @@ def main():
     fingerprint = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     for schema in sorted((ROOT / 'app/schemas').rglob('*.json')):
         fingerprint[str(schema.relative_to(ROOT))] = hashlib.sha256(schema.read_bytes()).hexdigest()
+    for asset in sorted((ROOT / 'app/src/main/assets').rglob('*')):
+        if asset.is_file():
+            fingerprint[str(asset.relative_to(ROOT))] = hashlib.sha256(asset.read_bytes()).hexdigest()
     fingerprint['app/src/main/AndroidManifest.xml'] = hashlib.sha256((ROOT / 'app/src/main/AndroidManifest.xml').read_bytes()).hexdigest()
     (output / 'source-fingerprints.json').write_text(json.dumps(fingerprint, indent=2))
     (output / 'classpath.txt').write_text(os.pathsep.join(map(str, cp)))
@@ -174,6 +177,12 @@ def main():
                 if name.startswith('META-INF/') and name.upper().endswith(('.SF', '.RSA', '.DSA', '.EC', 'MANIFEST.MF')):
                     continue
                 z.writestr(info, old.read(name))
+                names.add(name)
+        for path in sorted((ROOT / 'app/src/main/assets').rglob('*')):
+            if path.is_file():
+                name = 'assets/' + str(path.relative_to(ROOT / 'app/src/main/assets'))
+                if name not in names:
+                    z.write(path, name, compress_type=zipfile.ZIP_DEFLATED)
         for path in sorted(dex.glob('*.dex')):
             z.write(path, path.name, compress_type=zipfile.ZIP_DEFLATED)
     run([BT / 'zipalign', '-P', '16', '-f', '4', output / 'unsigned.apk', output / 'aligned.apk'])

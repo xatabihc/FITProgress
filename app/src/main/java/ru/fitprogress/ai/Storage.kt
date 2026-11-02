@@ -30,7 +30,11 @@ class Repository(private val db: FitDatabase, private val context: Context) {
     suspend fun saveGoal(g: SportGoal) = storage { PersonalValidation.goal(g); dao.putPersonal(PersonalRow("goal:${g.id}", "goal", gson.toJson(g))) }
     suspend fun saveWellbeing(w: Wellbeing) = storage { PersonalValidation.wellbeing(w); require(LocalDate.parse(w.date) <= LocalDate.now()) { "Нельзя оценить самочувствие будущего дня" }; dao.putPersonal(PersonalRow("wellbeing:${w.date}", "wellbeing", gson.toJson(w))) }
     suspend fun deleteWellbeing(date: String) = storage { dao.deletePersonal("wellbeing:$date") }
-    val exercises = dao.exercises().map { rows -> Catalog.exercises + rows.map { gson.fromJson(it.payload, Exercise::class.java) } }.flowOn(Dispatchers.Default)
+    val exercises = dao.exercises().map { rows ->
+        val local = Catalog.exercises + OpenExerciseLibrary.entries(context)
+        val localIds = local.mapTo(HashSet()) { it.id }
+        local + rows.map { gson.fromJson(it.payload, Exercise::class.java) }.filterNot { it.id in localIds }
+    }.flowOn(Dispatchers.Default)
     val workouts = dao.workouts().map { rows -> rows.map { gson.fromJson(it.payload, Workout::class.java) }.sortedBy { it.date } }.flowOn(Dispatchers.Default)
     val runs = dao.runs().map { rows -> rows.map { gson.fromJson(it.payload, Run::class.java) }.sortedByDescending { it.started } }.flowOn(Dispatchers.Default)
     private fun readProfile(p: Preferences) = Profile(p[stringPreferencesKey("name")] ?: "Спортсмен", p[stringPreferencesKey("level")] ?: "Новичок", p[stringPreferencesKey("goals")] ?: "Здоровье и регулярность", p[stringPreferencesKey("activities")] ?: "Силовые, бег", p[booleanPreferencesKey("light")] ?: false, p[booleanPreferencesKey("notifications")] ?: false, p[intPreferencesKey("rest")] ?: 60, p[booleanPreferencesKey("timerSound")] ?: true, p[booleanPreferencesKey("timerVibration")] ?: true, p[stringPreferencesKey("accent")] ?: "lime", p[booleanPreferencesKey("mapEnabled")] ?: true, p[booleanPreferencesKey("reminders")] ?: false, p[intPreferencesKey("reminderHour")] ?: 18, p[booleanPreferencesKey("runSignals")] ?: false)
@@ -49,13 +53,18 @@ class Repository(private val db: FitDatabase, private val context: Context) {
     suspend fun saveAll(ws: List<Workout>) = storage { db.withTransaction { ws.forEach { BackupCodec.validateWorkout(it); require(dao.workout(it.id) == null); dao.putWorkout(WorkoutRow(it.id, gson.toJson(it))) } } }
     suspend fun deleteWorkout(id: String) = storage { val w = dao.workout(id)?.let { gson.fromJson(it.payload, Workout::class.java) }; require(w?.status == "planned"); dao.deleteWorkout(id) }
     suspend fun updateWorkout(id: String, change: (Workout) -> Workout) = storage {
-        dao.workout(id)?.let { row -> val w = gson.fromJson(row.payload, Workout::class.java); if(w.status != "done") { val next = change(w); require(next.id == id) { "Идентификатор тренировки нельзя менять" }; BackupCodec.validateWorkout(next); if(next.status == "active") require(dao.allWorkouts().none { it.id != id && gson.fromJson(it.payload, Workout::class.java).status in listOf("active", "paused") }) { "Сначала завершите текущую тренировку" }; dao.putWorkout(WorkoutRow(id, gson.toJson(next))) } }
+        dao.workout(id)?.let { row -> val w = gson.fromJson(row.payload, Workout::class.java); if(w.status != "done") { val next = SessionEdits.cancelMissingStage(change(w)); require(next.id == id) { "Идентификатор тренировки нельзя менять" }; BackupCodec.validateWorkout(next); if(next.status == "active") require(dao.allWorkouts().none { it.id != id && gson.fromJson(it.payload, Workout::class.java).status in listOf("active", "paused") }) { "Сначала завершите текущую тренировку" }; dao.putWorkout(WorkoutRow(id, gson.toJson(next))) } }
     }
-    suspend fun saveRun(r: Run) = storage { dao.putRun(RunRow(r.id, gson.toJson(r))) }
+    suspend fun saveRun(r: Run) = storage {
+        val previous = dao.run(r.id)?.let { gson.fromJson(it.payload, Run::class.java) }
+        require(previous?.status != "done" || previous == r) { "Сохранённую пробежку нельзя перезаписывать" }
+        if(previous == null && r.status != "done") require(dao.allRuns().none { gson.fromJson(it.payload, Run::class.java).status != "done" }) { "Сначала завершите текущую пробежку" }
+        if(previous != r) dao.putRun(RunRow(r.id, gson.toJson(r)))
+    }
     suspend fun updateRun(id: String, change: (Run) -> Run): Run? = storage {
         val r = dao.run(id)?.let { gson.fromJson(it.payload, Run::class.java) } ?: return@storage null
         if(r.status == "done") return@storage r
-        change(r).also { dao.putRun(RunRow(it.id, gson.toJson(it))) }
+        change(r).also { require(it.id == id) { "Идентификатор пробежки нельзя менять" }; dao.putRun(RunRow(it.id, gson.toJson(it))) }
     }
     suspend fun currentRun(): Run? = withContext(Dispatchers.IO) { dao.allRuns().map { gson.fromJson(it.payload, Run::class.java) }.firstOrNull { it.status != "done" && !it.demo } }
     private suspend fun snapshotUnlocked(): Backup {
@@ -125,7 +134,7 @@ open class FitApp : Application() {
         ready = scope.async { repository.recoverRun(); repository.recoverWorkouts(AndroidClock.read(this@FitApp)) }
         if(!backgroundSchedulingEnabled) return
         scope.launch {
-            repository.profile.map { it.reminders }.distinctUntilChanged().collect { enabled ->
+            repository.profile.map { it.reminders }.catch { error -> if(error is CancellationException || error !is Exception) throw error; emit(false) }.distinctUntilChanged().collect { enabled ->
                 val wm = WorkManager.getInstance(this@FitApp)
                 if(enabled) wm.enqueueUniquePeriodicWork("planned-reminders", ExistingPeriodicWorkPolicy.KEEP, PeriodicWorkRequestBuilder<ReminderWorker>(15, TimeUnit.MINUTES).build()) else wm.cancelUniqueWork("planned-reminders")
             }

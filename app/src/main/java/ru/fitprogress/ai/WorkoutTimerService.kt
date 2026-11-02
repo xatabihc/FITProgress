@@ -12,11 +12,13 @@ import kotlinx.coroutines.flow.*
 /** User-started workout clock and countdown signals, independent of Activity lifetime. */
 class WorkoutTimerService : Service() {
     companion object {
+        val failure = MutableStateFlow<String?>(null)
         fun start(context: Context) { context.startForegroundService(Intent(context, WorkoutTimerService::class.java)) }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val app get() = application as FitApp
     private val repo get() = app.repository
+    private var wakeUntil = 0L
     private var wake: PowerManager.WakeLock? = null
     private var current: Workout? = null
     private var job: Job? = null
@@ -26,27 +28,37 @@ class WorkoutTimerService : Service() {
         manager.createNotificationChannel(NotificationChannel("workout-clock", "Тренировка и таймеры", NotificationManager.IMPORTANCE_LOW))
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(44, notification("Восстановление тренировки…"))
-        if(job?.isActive == true) return START_NOT_STICKY
+        try { startForeground(44, notification("Восстановление тренировки…")) }
+        catch(error: RuntimeException) { failure.value = "Не удалось запустить фоновый таймер. Тренировка сохранена; откройте её и проверьте разрешения."; stopSelf(); return START_NOT_STICKY }
+        failure.value = null
+        job?.cancel()
         job = scope.launch {
-            app.ready.await()
-            val initial = repo.workouts.first()
-            val sessions = repo.workouts.stateIn(this, SharingStarted.Eagerly, initial)
             try {
+                app.ready.await()
+                val initial = repo.workouts.first()
+                val sessions = repo.workouts.catch { error ->
+                    if(error is CancellationException || error !is Exception) throw error
+                    failure.value = "Не удалось прочитать тренировку. Сохранённая история не изменена."
+                    emit(emptyList())
+                }.stateIn(this, SharingStarted.Eagerly, initial)
                 var ticks = 0
                 while(isActive) {
                     val w = sessions.value.firstOrNull { it.status in listOf("active", "paused") }
                     current = w
-                    if(w == null) { stopSelf(); break }
+                    if(w == null) { stopSelfResult(startId); break }
                     val stamp = AndroidClock.read(this@WorkoutTimerService)
                     val rest = SessionTimers.rest(w, stamp); val stage = SessionTimers.stage(w, stamp)
                     val remaining = maxOf(rest, stage)
-                    if(w.status == "active" && remaining > 0) {
-                        if(wake?.isHeld != true) wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FitProgress:Countdown").apply { acquire(remaining.coerceAtMost(86400000L) + 5000) }
-                    } else releaseWake()
                     val timing = w.timing
                     val restDue = w.status == "active" && timing?.boot == stamp.boot && timing.restDeadlineMs > 0 && rest == 0L
                     val stageDue = w.status == "active" && timing?.boot == stamp.boot && timing.stageDeadlineMs > 0 && stage == 0L
+                    if(w.status == "active" && (remaining > 0 || restDue || stageDue)) {
+                        val until = stamp.elapsedMs + remaining.coerceAtMost(86400000L) + 5000
+                        if(wake?.isHeld != true || until > wakeUntil) {
+                            releaseWake(); wakeUntil = until
+                            wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FitProgress:Countdown").apply { acquire(remaining.coerceAtMost(86400000L) + 5000) }
+                        }
+                    } else releaseWake()
                     if(restDue || stageDue) {
                         // Claim in Room before signalling; a restarted Activity cannot repeat the sound.
                         var claimed = false
@@ -63,16 +75,17 @@ class WorkoutTimerService : Service() {
                             val profile = repo.profile.first()
                             if(profile.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
                             if(profile.timerSound) { val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75); tone.startTone(ToneGenerator.TONE_PROP_BEEP, 700); scope.launch { try { delay(1000) } finally { tone.release() } } }
-                            getSystemService(NotificationManager::class.java).notify(45, notification(if(stageDue) "Этап завершён — подтвердите подход" else "Отдых завершён", false))
+                            postNotificationIfAllowed(45, notification(if(stageDue) "Этап завершён — подтвердите подход" else "Отдых завершён", false))
                         }
                     }
                     if(++ticks % 5 == 0 && w.status == "active") repo.updateWorkout(w.id) { SessionTimers.checkpoint(it, stamp) }
                     val text = if(w.status == "paused") "Тренировка на паузе" else if(rest > 0) "Отдых ${formatTime(rest)}" else if(stage > 0) "Этап ${formatTime(stage)}" else "Тренировка ${formatTime(SessionTimers.elapsed(w, stamp))}"
-                    getSystemService(NotificationManager::class.java).notify(44, notification(text))
+                    postNotificationIfAllowed(44, notification(text))
                     delay(1000)
                 }
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) {
+                failure.value = "Фоновый таймер остановлен из-за ошибки. История сохранена; проверьте текущую тренировку."
                 current?.let { w -> runCatching { repo.updateWorkout(w.id) { SessionTimers.pause(it, AndroidClock.read(this@WorkoutTimerService)) } } }
                 stopSelf()
             }
@@ -83,7 +96,7 @@ class WorkoutTimerService : Service() {
         val open = PendingIntent.getActivity(this, 44, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Builder(this, "workout-clock").setSmallIcon(R.drawable.ic_logo).setContentTitle("FitProgress · тренировка").setContentText(text).setContentIntent(open).setOngoing(ongoing).setAutoCancel(!ongoing).build()
     }
-    private fun releaseWake() { if(wake?.isHeld == true) wake?.release(); wake = null }
+    private fun releaseWake() { if(wake?.isHeld == true) wake?.release(); wake = null; wakeUntil = 0L }
     override fun onDestroy() { releaseWake(); scope.cancel(); stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 }

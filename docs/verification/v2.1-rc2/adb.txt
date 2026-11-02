@@ -1,0 +1,14 @@
+* daemon not running; starting now at tcp:5037
+ADB server didn't ACK
+Full server startup log: /tmp/adb.1000.log
+Server had pid: 4
+--- adb starting (pid 4) ---
+11-02 00:27:02.218     4     4 I adb     : main.cpp:63 Android Debug Bridge version 1.0.41
+11-02 00:27:02.218     4     4 I adb     : main.cpp:63 Version 34.0.5-debian
+11-02 00:27:02.218     4     4 I adb     : main.cpp:63 Installed as /usr/lib/android-sdk/platform-tools/adb
+11-02 00:27:02.218     4     4 I adb     : main.cpp:63 Running on Linux 7.0.0-38-generic (x86_64)
+11-02 00:27:02.218     4     4 I adb     : main.cpp:63 
+11-02 00:27:02.719     4     4 F adb     : main.cpp:165 could not install *smartsocket* listener: Operation not permitted
+
+* failed to start daemon
+adb: failed to check server version: cannot connect to daemon

@@ -48,6 +48,10 @@ object SessionEdits {
         require(s.restSeconds == null || s.restSeconds in 0..3600)
         require(s.rpe == null || s.rpe in 1..10); require(s.rir == null || s.rir in 0..10); require(s.comment.length <= 2000)
     }
+    fun cancelMissingStage(w: Workout): Workout {
+        if(w.timerSetId.isBlank() || w.items.any { i -> i.sets.any { it.id == w.timerSetId && !it.done } }) return w
+        return w.copy(timerSetId = "", timerUntil = 0, timerRemaining = 0, timing = w.timing?.copy(stageDeadlineMs = 0))
+    }
     fun editable(w: Workout) = w.status in listOf("planned", "active", "paused")
     fun addSet(w: Workout, itemId: String): Workout {
         require(editable(w)); val item = requireNotNull(w.items.find { it.id == itemId }); require(item.sets.size < 100)
@@ -79,10 +83,13 @@ object SessionEdits {
 
 object RunTimers {
     fun elapsed(r: Run, now: ClockStamp): Long = r.accumulatedMs + if(r.status == "active" && r.timing?.boot == now.boot) max(0, now.elapsedMs - r.timing.anchorMs) else 0
-    fun resume(r: Run, now: ClockStamp): Run = if(r.status == "active" && r.timing?.boot == now.boot) r else r.copy(status = "active", activeSince = now.wallMs, timing = MonotonicTiming(now.boot, now.elapsedMs), segment = r.segment + 1)
+    fun resume(r: Run, now: ClockStamp): Run {
+        require(r.status in listOf("active", "paused")) { "Завершённую пробежку нельзя возобновить" }
+        return if(r.status == "active" && r.timing?.boot == now.boot) r else r.copy(status = "active", activeSince = now.wallMs, timing = MonotonicTiming(now.boot, now.elapsedMs), segment = r.segment + 1)
+    }
     fun checkpoint(r: Run, now: ClockStamp): Run = if(r.status != "active") r else r.copy(accumulatedMs = elapsed(r, now), activeSince = now.wallMs, timing = MonotonicTiming(now.boot, now.elapsedMs))
     fun pause(r: Run, now: ClockStamp): Run = if(r.status != "active") r else r.copy(status = "paused", accumulatedMs = elapsed(r, now), activeSince = 0, timing = null, segment = r.segment + 1)
-    fun finish(r: Run, now: ClockStamp): Run = pause(r, now).copy(status = "done", ended = now.wallMs, activeSince = 0, timing = null)
+    fun finish(r: Run, now: ClockStamp): Run = if(r.status == "done") r else pause(r, now).copy(status = "done", ended = now.wallMs, activeSince = 0, timing = null)
 }
 
 object ManualRuns {

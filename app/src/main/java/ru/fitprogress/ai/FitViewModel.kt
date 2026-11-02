@@ -7,19 +7,57 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.time.LocalDate
 
-class FitViewModel(app: Application) : AndroidViewModel(app) {
-    val repo = (app as FitApp).repository
-    val exercises = repo.exercises.stateIn(viewModelScope, SharingStarted.Eagerly, Catalog.exercises)
-    val workouts = repo.workouts.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val runs = repo.runs.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val personalData = repo.personalData.stateIn(viewModelScope, SharingStarted.Eagerly, PersonalState())
-    val goals = personalData.map { it.goals }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val wellbeing = personalData.map { it.wellbeing }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val profile = repo.profile.stateIn(viewModelScope, SharingStarted.Eagerly, Profile())
+class FitViewModel @JvmOverloads constructor(app: Application, val repo: Repository = (app as FitApp).repository) : AndroidViewModel(app) {
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 20)
     val busy = MutableStateFlow(false)
-    fun action(block: suspend () -> Unit) { viewModelScope.launch { try { block() } catch(e: Exception) { if(e is CancellationException) throw e; messages.emit(e.message ?: "Не удалось сохранить данные") } } }
-    fun exclusive(block: suspend () -> Unit) { if(busy.value) return; busy.value = true; viewModelScope.launch { try { block() } catch(e: Exception) { if(e is CancellationException) throw e; messages.emit(e.message ?: "Ошибка операции") } finally { busy.value = false } } }
+    val loadFailure = MutableStateFlow<String?>(null)
+    private val mutations = OrderedMutations()
+    private fun <T> Flow<T>.reportReadFailures(): Flow<T> = catch { error ->
+        if(error is CancellationException || error !is Exception) throw error
+        loadFailure.value = "Не удалось прочитать локальные данные (${error.javaClass.simpleName}). История не удалялась. Закройте приложение и перезапустите его."
+    }
+    val exercises = repo.exercises.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, Catalog.exercises)
+    val workouts = repo.workouts.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val runs = repo.runs.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val personalData = repo.personalData.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, PersonalState())
+    val goals = personalData.map { it.goals }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val wellbeing = personalData.map { it.wellbeing }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val profile = repo.profile.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, Profile())
+    val runLaunch = RunService.launch.state
+    fun requestRunStart(requestPermission: () -> Unit) {
+        val context = getApplication<Application>()
+        val fine = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        android.util.Log.i("FitRunStart", "UI start pressed; fine=$fine phase=${runLaunch.value.phase}")
+        if(!RunService.launch.request(fine)) return
+        if(fine) dispatchRunStart() else try { requestPermission() } catch(e: RuntimeException) { RunService.launch.fail(RunLaunchError.PERMISSION, e.javaClass.simpleName) }
+    }
+    fun runPermissionResult() {
+        val fine = getApplication<Application>().checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        android.util.Log.i("FitRunStart", "Permission result; fine=$fine")
+        if(RunService.launch.permissionResult(fine)) dispatchRunStart()
+    }
+    private fun dispatchRunStart() {
+        val context = getApplication<Application>()
+        try {
+            val enabled = context.getSystemService(android.location.LocationManager::class.java).isLocationEnabled
+            if(RunService.launch.dispatch(enabled) { RunService.command(context, RunService.START) }) {
+                val attempt = runLaunch.value.attempt
+                viewModelScope.launch { delay(15000); RunService.launch.timeout(attempt) }
+            }
+        } catch(e: RuntimeException) { android.util.Log.e("FitRunStart", "Dispatch failed", e); RunService.launch.fail(RunLaunchError.SERVICE, e.javaClass.simpleName) }
+    }
+    fun action(block: suspend () -> Unit): Job = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+        try { mutations.run { check(loadFailure.value == null) { "Изменения недоступны до восстановления чтения данных" }; block() } }
+        catch(error: Exception) { if(error is CancellationException) throw error; messages.emit(error.message ?: "Не удалось сохранить данные") }
+    }
+    fun exclusive(block: suspend () -> Unit) {
+        if(!busy.compareAndSet(false, true)) return
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try { mutations.run { check(loadFailure.value == null) { "Изменения недоступны до восстановления чтения данных" }; block() } }
+            catch(error: Exception) { if(error is CancellationException) throw error; messages.emit(error.message ?: "Ошибка операции") }
+            finally { busy.value = false }
+        }
+    }
     fun notify(text: String) { messages.tryEmit(text) }
     fun create(onCreated: (String) -> Unit) = exclusive { val w = Workout(); repo.save(w); onCreated(w.id) }
     fun update(id: String, block: (Workout) -> Workout) = action { repo.updateWorkout(id, block) }

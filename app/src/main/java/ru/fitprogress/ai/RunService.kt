@@ -4,7 +4,11 @@ import android.Manifest
 import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
+import android.util.Log
+import androidx.core.content.ContextCompat
 import android.os.*
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -20,28 +24,42 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class RunService : Service() {
     companion object {
         const val START = "start"; const val PAUSE = "pause"; const val RESUME = "resume"; const val FINISH = "finish"
+        val launch = RunLaunchController()
         val signal = MutableStateFlow("Запись не запущена")
         val running = MutableStateFlow(false)
         fun command(context: Context, action: String) {
             val intent = Intent(context, RunService::class.java).setAction(action)
-            if(action == START || action == RESUME) context.startForegroundService(intent) else context.startService(intent)
+            Log.i("FitRunStart", "Dispatch service action=$action")
+            try {
+                if(action == START || action == RESUME) ContextCompat.startForegroundService(context, intent) else context.startService(intent)
+            } catch(e: RuntimeException) { Log.e("FitRunStart", "Service dispatch rejected action=$action", e); throw e }
         }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val events = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private val repo get() = (application as FitApp).repository
-    private lateinit var client: FusedLocationProviderClient
+    private var client: FusedLocationProviderClient? = null
+    private val locations get() = getSystemService(LocationManager::class.java)
+    private val platformListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) { acceptLocations(listOf(location)) }
+        override fun onProviderDisabled(provider: String) { events.trySend { pauseInternal(); signal.value = "GPS выключен"; launch.fail(RunLaunchError.LOCATION_DISABLED) } }
+        override fun onProviderEnabled(provider: String) {}
+        @Deprecated("Legacy Android callback") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    }
     private var current: Run? = null
     private var lastFix = 0L
     private var wakeUntil = 0L
     private var wakeLock: PowerManager.WakeLock? = null
     private val callback = object : LocationCallback() {
-        override fun onLocationResult(result: LocationResult) {
+        override fun onLocationResult(result: LocationResult) { acceptLocations(result.locations) }
+        override fun onLocationAvailability(availability: LocationAvailability) { if(!availability.isLocationAvailable) signal.value = "GPS недоступен · ожидаем сигнал" }
+    }
+    private fun acceptLocations(fixes: List<Location>) {
             events.trySend {
                 val r = current
                 if(r != null && r.status == "active") {
                     var next: Run = r
-                    result.locations.forEach { location ->
+                    fixes.forEach { location ->
                         if(!location.hasAccuracy()) { signal.value = "GPS без оценки точности: точка отклонена"; return@forEach }
                         if(location.isFromMockProvider) { signal.value = "Тестовые координаты Android не входят в реальную историю GPS"; return@forEach }
                         val stamp = AndroidClock.read(this@RunService)
@@ -65,65 +83,90 @@ class RunService : Service() {
                     }
                 }
             }
-        }
-        override fun onLocationAvailability(availability: LocationAvailability) { if(!availability.isLocationAvailable) signal.value = "GPS недоступен · ожидаем сигнал" }
     }
     override fun onCreate() {
         super.onCreate()
-        client = LocationServices.getFusedLocationProviderClient(this)
+        Log.i("FitRunStart", "Service onCreate")
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("run", "Запись пробежки", NotificationManager.IMPORTANCE_LOW))
-        scope.launch { for(event in events) try { event() } catch(e: CancellationException) { throw e } catch(e: Exception) { signal.value = "Ошибка GPS: ${e.message ?: "не удалось записать"}"; runCatching { pauseInternal() }; stopSelf() } }
+        scope.launch { for(event in events) try { event() } catch(e: CancellationException) { throw e } catch(e: Exception) { Log.e("FitRunStart", "Service event failed", e); launch.fail(if(e is SecurityException) RunLaunchError.PERMISSION else RunLaunchError.STORAGE, e.javaClass.simpleName); signal.value = launch.state.value.error!!.message; runCatching { pauseInternal() }; stopSelf() } }
         scope.launch {
             while(isActive) {
                 delay(5000)
                 events.send {
                     current?.takeIf { it.status == "active" }?.let { r ->
-                        val now = System.currentTimeMillis()
-                        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED || !getSystemService(LocationManager::class.java).isLocationEnabled) { signal.value = "Геолокация отключена или разрешение отозвано"; pauseInternal(); return@send }
+                        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED || !getSystemService(LocationManager::class.java).isLocationEnabled) { signal.value = "Геолокация отключена или разрешение отозвано"; pauseInternal(); launch.fail(if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) RunLaunchError.PERMISSION else RunLaunchError.LOCATION_DISABLED); return@send }
                         acquireRunWakeLock()
                         val next = RunTimers.checkpoint(r, AndroidClock.read(this@RunService))
                         current = next; repo.saveRun(next)
                         if(android.os.SystemClock.elapsedRealtime() - lastFix > 20000) signal.value = "Нет свежего сигнала GPS · расстояние не увеличивается"
-                        getSystemService(NotificationManager::class.java).notify(42, notification(next))
+                        postNotificationIfAllowed(42, notification(next))
                     }
                 }
             }
         }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i("FitRunStart", "Service onStartCommand action=${intent?.action} startId=$startId")
         // startForeground is immediate, before any database or permission work.
         if(intent?.action == START || intent?.action == RESUME) {
-            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) { signal.value = "Нужна точная геолокация"; stopSelf(); return START_NOT_STICKY }
-            try { startForeground(42, notification(current)) } catch(e: SecurityException) { signal.value = "Разрешение геолокации отозвано"; stopSelf(); return START_NOT_STICKY }
+            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) { launch.fail(RunLaunchError.PERMISSION); signal.value = RunLaunchError.PERMISSION.message; stopSelf(); return START_NOT_STICKY }
+            try { startForeground(42, notification(current)) } catch(e: RuntimeException) { Log.e("FitRunStart", "startForeground failed", e); launch.fail(if(e is SecurityException) RunLaunchError.PERMISSION else RunLaunchError.SERVICE, e.javaClass.simpleName); signal.value = if(e is SecurityException) "Разрешение геолокации отозвано" else "Фоновая запись недоступна. Откройте приложение и повторите запуск."; stopSelf(); return START_NOT_STICKY }
         }
         events.trySend {
             (application as FitApp).ready.await()
             when(intent?.action) {
                 START, RESUME -> {
-                    if(current?.status == "active") return@trySend
-                    if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) { signal.value = "Нужна точная геолокация"; stopSelf(); return@trySend }
-                    if(GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this@RunService) != ConnectionResult.SUCCESS) { signal.value = "Google Play Services недоступны на устройстве"; stopSelf(); return@trySend }
-                    if(!getSystemService(LocationManager::class.java).isLocationEnabled) { signal.value = "Включите геолокацию в настройках телефона"; stopSelf(); return@trySend }
-                    val old = current ?: repo.currentRun()
-                    val now = System.currentTimeMillis()
+                    if(current?.status == "active") { launch.active(); return@trySend }
+                    if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) { launch.fail(RunLaunchError.PERMISSION); signal.value = RunLaunchError.PERMISSION.message; stopSelf(); return@trySend }
+                    if(!getSystemService(LocationManager::class.java).isLocationEnabled) { launch.fail(RunLaunchError.LOCATION_DISABLED); signal.value = RunLaunchError.LOCATION_DISABLED.message; stopSelf(); return@trySend }
+                    val old = current?.takeIf { it.status != "done" } ?: repo.currentRun()
                     current = RunTimers.resume(old ?: Run(status = "paused", activeSince = 0), AndroidClock.read(this@RunService))
                     repo.saveRun(current!!)
                     lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "Ожидаем точные координаты GPS"; running.value = true
                     acquireRunWakeLock()
-                    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L).setMinUpdateIntervalMillis(1000).setMaxUpdateDelayMillis(5000).setWaitForAccurateLocation(true).build()
-                    try { client.requestLocationUpdates(request, callback, Looper.getMainLooper()).addOnFailureListener { error -> events.trySend { signal.value = "GPS: ${error.message}"; pauseInternal() } } }
-                    catch(e: SecurityException) { signal.value = "Разрешение геолокации отозвано"; pauseInternal() }
+                    try {
+                        subscribeLocations()
+                        launch.active()
+                        Log.i("FitRunStart", "Run active; waiting for real GPS fix")
+                    } catch(e: Exception) {
+                        Log.e("FitRunStart", "Location subscription failed", e)
+                        pauseInternal()
+                        launch.fail(if(e is SecurityException) RunLaunchError.PERMISSION else if(e is IllegalArgumentException) RunLaunchError.NO_PROVIDER else RunLaunchError.SUBSCRIPTION, e.javaClass.simpleName)
+                        signal.value = launch.state.value.error!!.message
+                    }
                 }
-                PAUSE -> { if(current == null) current = repo.currentRun(); pauseInternal(); signal.value = "Пробежка на паузе" }
+                PAUSE -> { if(current == null) current = repo.currentRun(); pauseInternal(); launch.idle(); signal.value = "Пробежка на паузе" }
                 FINISH -> {
                     if(current == null) current = repo.currentRun()
-                    current?.takeIf { it.status != "done" }?.let { val now = System.currentTimeMillis(); val done = RunTimers.finish(it, AndroidClock.read(this@RunService)); repo.saveRun(done); current = done }
-                    client.removeLocationUpdates(callback); running.value = false; signal.value = "Пробежка сохранена"; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+                    current?.takeIf { it.status != "done" }?.let { val done = RunTimers.finish(it, AndroidClock.read(this@RunService)); repo.saveRun(done); current = done }
+                    removeUpdates(); launch.idle(); running.value = false; signal.value = "Пробежка сохранена"; if(stopSelfResult(startId)) stopForeground(STOP_FOREGROUND_REMOVE)
                 }
                 else -> stopSelf()
             }
         }
         return START_NOT_STICKY // A killed service is recovered as paused, never as silently recording.
+    }
+    private fun subscribeLocations() {
+        val gms = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) == ConnectionResult.SUCCESS
+        Log.i("FitRunStart", "Location backend=${if(gms) "fused" else "android-gps"}")
+        if(gms) {
+            val fused = LocationServices.getFusedLocationProviderClient(this); client = fused
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L).setMinUpdateIntervalMillis(1000).setMaxUpdateDelayMillis(5000).setWaitForAccurateLocation(true).build()
+            fused.requestLocationUpdates(request, callback, Looper.getMainLooper()).addOnFailureListener { error -> events.trySend {
+                if(current?.status == "active") {
+                    Log.e("FitRunStart", "Fused request failed", error)
+                    pauseInternal(); launch.fail(if(error is SecurityException) RunLaunchError.PERMISSION else RunLaunchError.SUBSCRIPTION, error.javaClass.simpleName)
+                    signal.value = launch.state.value.error!!.message
+                }
+            } }
+        } else {
+            require(locations.allProviders.contains(LocationManager.GPS_PROVIDER)) { "GPS_PROVIDER missing" }
+            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, platformListener, Looper.getMainLooper())
+        }
+    }
+    private fun removeUpdates() {
+        try { client?.removeLocationUpdates(callback) } catch(e: SecurityException) { Log.w("FitRunStart", "Permission revoked during fused cleanup", e) }
+        try { locations.removeUpdates(platformListener) } catch(e: SecurityException) { Log.w("FitRunStart", "Permission revoked during GPS cleanup", e) }
     }
     private fun acquireRunWakeLock() {
         val now = android.os.SystemClock.elapsedRealtime()
@@ -133,10 +176,10 @@ class RunService : Service() {
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FitProgress:Run").apply { acquire(60 * 60 * 1000L) }
     }
     private suspend fun pauseInternal() {
-        client.removeLocationUpdates(callback)
-        current?.takeIf { it.status == "active" }?.let { val now = System.currentTimeMillis(); current = RunTimers.pause(it, AndroidClock.read(this@RunService)); repo.saveRun(current!!) }
+        removeUpdates()
+        current?.takeIf { it.status == "active" }?.let { current = RunTimers.pause(it, AndroidClock.read(this@RunService)); repo.saveRun(current!!) }
         if(wakeLock?.isHeld == true) wakeLock?.release(); wakeLock = null; running.value = false
-        current?.let { getSystemService(NotificationManager::class.java).notify(42, notification(it)) }
+        current?.let { postNotificationIfAllowed(42, notification(it)) }
     }
     private fun notification(r: Run?): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -147,11 +190,13 @@ class RunService : Service() {
             .addAction(0, "Пауза", pause).addAction(0, "Сохранить", finish).build()
     }
     override fun onDestroy() {
-        client.removeLocationUpdates(callback)
+        removeUpdates()
         if(wakeLock?.isHeld == true) wakeLock?.release()
         running.value = false
         val previous = current?.takeIf { it.status == "active" }
         if(previous != null) (application as FitApp).scope.launch { repo.updateRun(previous.id) { if(it.segment == previous.segment) RunTimers.pause(it, AndroidClock.read(this@RunService)) else it } }
+        if(launch.state.value.phase == RunLaunchPhase.ACTIVE || launch.state.value.pending) { launch.fail(RunLaunchError.SERVICE, "ServiceDestroyed") }
+        Log.i("FitRunStart", "Service onDestroy")
         scope.cancel(); super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null

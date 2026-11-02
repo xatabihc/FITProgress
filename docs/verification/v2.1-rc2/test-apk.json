@@ -1,0 +1,19 @@
+{
+  "path": "/home/xatabihc/Projects/FitProgressAI/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
+  "bytes": 990274,
+  "sha256": "21ee0532eb27bcadae8ad058aea7d9eb2106db2199d0e6cecc1eb7efda5da84b",
+  "runner": "ru.fitprogress.ai.FitTestRunner",
+  "required_classes_verified": true,
+  "source_test_count": 23,
+  "compiled": true,
+  "executed": false,
+  "gps_service_test_opt_in_required": true,
+  "sources": {
+    "app/src/androidTest/java/ru/fitprogress/ai/FitTestRunner.kt": "ad7ef7c5b9748cac64fa3fe120285afe5ce13206c6e401976624b327547b3c0d",
+    "app/src/androidTest/java/ru/fitprogress/ai/GpsServiceStartTest.kt": "f5c942160946afc6923e0b287b845944a6edc08ca6fa3cefe7be5d4fc4a23304",
+    "app/src/androidTest/java/ru/fitprogress/ai/MainFlowTest.kt": "a0fc88f23e3fe62f279c5a2e5b24e87128b9cf935851c1728502a2c470009e30",
+    "app/src/androidTest/java/ru/fitprogress/ai/RepositoryTest.kt": "00cc52a025adaaff135719ced221fb0c4402675d21f364c83a75bf585dc6d099",
+    "app/src/androidTest/java/ru/fitprogress/ai/RunStartUiTest.kt": "7d624bf2cf7c47541ebc3d06c0718a866559fdef080058600389992eaced3a00",
+    "app/src/androidTest/java/ru/fitprogress/ai/ViewModelStateTest.kt": "82ae9d2f8b0ee948273c5c77b85de354cb8aca919db7f9db6e41525c5430f17f"
+  }
+}

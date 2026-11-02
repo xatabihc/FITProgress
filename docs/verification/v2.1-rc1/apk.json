@@ -1,0 +1,21 @@
+{
+  "applicationId": "ru.fitprogress.ai",
+  "versionName": "2.1-rc1",
+  "versionCode": 4,
+  "path": "/home/xatabihc/Projects/FitProgressAI/app/build/outputs/apk/debug/app-debug.apk",
+  "bytes": 60615693,
+  "sha256": "01567ba2d2669bf486b6a9e705973c60938c5865267a70cab9a28c9331465355",
+  "dex_files": 3,
+  "declared_classes": 30890,
+  "required_classes_present": true,
+  "room_schema_version": 2,
+  "room_schema_identity": "f64ff181b84c0bf838f8d0774f61b70d",
+  "room_schema_identity_in_dex": true,
+  "native_libraries_preserved": 12,
+  "same_debug_signer_as_baseline": true,
+  "source_fingerprints_match": true,
+  "zipalign_16kb": true,
+  "gradle_build_verified": false,
+  "device_install_verified": false,
+  "build_method": "Kotlin 2.1.20 Compose compiler / javac17 / D8 / AAPT2 / zipalign / apksigner, existing Gradle dependency intermediates"
+}

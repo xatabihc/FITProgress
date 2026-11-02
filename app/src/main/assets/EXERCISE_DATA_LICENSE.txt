@@ -1,0 +1,8 @@
+Offline exercise data
+
+Dataset: free-exercise-db (yuhonas), snapshot commit f00c92c7dcf1216a928a52c3706c7ce8e2f71ed5.
+Source: https://github.com/yuhonas/free-exercise-db
+Source license: Unlicense (public domain dedication): https://github.com/yuhonas/free-exercise-db/blob/main/LICENSE.md
+The dataset README credits the original exercise database by Ollie Jennings. This application includes the textual exercise records, not the source image files. Names, equipment, and instruction wording may be English; the interface marks the source language and translates available muscle/equipment labels. Five source records without required core fields are skipped at load time.
+
+The Unlicense dedicates covered work to the public domain and provides it as-is without warranty. The original source should be consulted for provenance and licensing details.

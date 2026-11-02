@@ -5,7 +5,7 @@ import java.util.UUID
 import kotlin.math.*
 
 fun newId(): String = UUID.randomUUID().toString()
-val categories = listOf("Грудь", "Спина", "Ноги", "Плечи", "Руки", "Пресс", "Кардио", "Растяжка", "Функциональные", "Калистеника", "Другие")
+val categories = listOf("Грудь", "Широчайшие и верх спины", "Нижняя часть спины", "Спина", "Плечи", "Бицепс", "Трицепс", "Предплечья", "Руки", "Пресс", "Косые мышцы живота", "Ягодицы", "Квадрицепсы", "Задняя поверхность бедра", "Икры", "Ноги", "Всё тело", "Кардио", "Калистеника", "Функциональные упражнения", "Растяжка", "Мобильность", "Плиометрика", "Восстановительные", "Другие")
 data class Exercise(
     val id: String = newId(), val name: String = "", val category: String = "Другие",
     val technique: String = "", val muscles: String = "", val equipment: String = "Без оборудования",
@@ -152,7 +152,7 @@ class LocalRecommendations : RecommendationEngine {
         w.copy(items = w.items.map { item -> item.copy(sets = item.sets.map { s -> s.copy(weight = (s.weight * factor * 10).roundToInt() / 10.0, reps = if (s.weight == 0.0 && s.seconds == 0 && s.distanceMeters == 0.0 && factor != 1.0) max(1, if (factor > 1) s.reps + 1 else (s.reps * factor).roundToInt()) else s.reps) }) })
     }
 }
-data class Program(val id: String, val name: String, val direction: String, val level: String, val weeks: Int, val weekdays: List<Int>, val exerciseNames: List<String>, val reps: Int, val sets: Int, val workSeconds: Int = 0, val restSeconds: Int = 60, val advice: String = "Разминка 5–10 минут. Выполняйте без боли, контролируйте технику. Между занятиями — восстановление. Это общий план, а не медицинская рекомендация.")
+data class Program(val id: String, val name: String, val direction: String, val level: String, val weeks: Int, val weekdays: List<Int>, val exerciseNames: List<String>, val reps: Int, val sets: Int, val workSeconds: Int = 0, val restSeconds: Int = 60, val advice: String = "Разминка 5–10 минут. Выполняйте без боли, контролируйте технику. Между занятиями — восстановление. Это общий план, а не медицинская рекомендация.", val dayExercises: List<List<String>> = emptyList(), val progression: String = "Сначала закрепите технику. Повышайте только один параметр после лёгкого выполнения всех подходов.")
 object Catalog {
     val exercises: List<Exercise> = listOf(
         Triple("Отжимания", "Грудь", "Ладони под плечами. Сохраняйте прямую линию корпуса, опускайтесь подконтрольно, выдох при подъёме."),
@@ -170,22 +170,36 @@ object Catalog {
         Triple("Берпи без прыжка", "Функциональные", "Присядьте, шагните в упор, вернитесь и встаньте. Сохраняйте контроль корпуса."),
         Triple("Велосипед", "Другие", "Настройте высоту седла. Поддерживайте ровное вращение педалей и лёгкое дыхание.")
     ).mapIndexed { i, t -> Exercise(id = "builtin-$i", name = t.first, category = t.second, technique = t.third, muscles = when(t.second) { "Грудь" -> "Грудные, трицепс"; "Спина", "Калистеника" -> "Широчайшие, бицепс"; "Ноги" -> "Квадрицепсы, ягодичные"; else -> t.second }, equipment = if (t.first.contains("гантел") || t.first == "Сгибания рук") "Гантели" else if(t.first == "Подтягивания") "Турник" else if(t.first == "Велосипед") "Велосипед" else "Без оборудования", seconds = if(t.second in listOf("Кардио", "Растяжка", "Пресс", "Другие")) 30 else 0, builtIn = true) }
-    private val directionExercises = linkedMapOf(
-        "Тренажёрный зал" to listOf("Приседания", "Жим гантелей лёжа", "Тяга гантели в наклоне"),
-        "Домашние тренировки" to listOf("Приседания", "Отжимания", "Планка"),
-        "Бег" to listOf("Ходьба", "Лёгкий бег", "Ходьба"),
-        "Калистеника" to listOf("Подтягивания", "Отжимания", "Планка"),
-        "ОФП" to listOf("Приседания", "Отжимания", "Ходьба"),
-        "Функциональные тренировки" to listOf("Берпи без прыжка", "Выпады назад", "Планка"),
-        "Растяжка" to listOf("Растяжка задней поверхности бедра", "Ходьба"),
-        "Велоспорт" to listOf("Велосипед", "Растяжка задней поверхности бедра"),
-        "Смешанные тренировки" to listOf("Приседания", "Отжимания", "Лёгкий бег")
+    private val easyAdvice = "Общая тренировочная программа, не медицинская рекомендация. Оставляйте не менее суток восстановления между силовыми занятиями. Прекратите упражнение при боли. Подберите вариант движения, который можете выполнять с устойчивой техникой."
+    private val runAdvice = "Бег в разговорном темпе; перед занятиями 5 минут спокойной ходьбы, после — 5 минут заминки. Между пробежками оставляйте день без бега. Не пытайтесь компенсировать пропущенную тренировку. Целевая дистанция или время не гарантируются."
+    private val fullA = listOf("Приседания", "Отжимания", "Тяга гантели в наклоне", "Планка")
+    private val fullB = listOf("Выпады назад", "Жим гантелей лёжа", "Подтягивания", "Растяжка задней поверхности бедра")
+    val programs = listOf(
+        Program("Тренажёрный зал-0", "Full Body · освоение базы", "Тренажёрный зал", "Новичок", 8, listOf(1,3,5), fullA, 8, 2, restSeconds = 120, advice = easyAdvice, dayExercises = listOf(fullA, fullB, fullA), progression = "Недели 1–2: 2 подхода и лёгкий вес; недели 3–6: при чистой технике добавляйте 1 повтор, максимум до 12; недели 7–8 повторите комфортную нагрузку."),
+        Program("Тренажёрный зал-1", "Верх / низ · 4 дня", "Тренажёрный зал", "Любитель", 8, listOf(1,2,4,5), fullA, 8, 3, restSeconds = 120, advice = easyAdvice, dayExercises = listOf(listOf("Жим гантелей лёжа", "Тяга гантели в наклоне", "Жим гантелей стоя"), listOf("Приседания", "Выпады назад", "Растяжка задней поверхности бедра"), listOf("Отжимания", "Подтягивания", "Сгибания рук"), listOf("Приседания", "Выпады назад", "Планка")), progression = "Оставляйте 2–3 повтора в запасе. Добавляйте повтор до верхней границы диапазона, затем увеличьте вес на минимальный шаг."),
+        Program("Домашние тренировки-0", "Дом · без инвентаря", "Домашние тренировки", "Новичок", 6, listOf(1,4), fullA, 8, 2, restSeconds = 90, advice = easyAdvice, dayExercises = listOf(listOf("Приседания", "Отжимания", "Планка"), listOf("Выпады назад", "Отжимания", "Приседания")), progression = "Двигайтесь от 2 подходов по 8 повторов к 3 по 10 только при сохранении техники; допускайте отжимания с колен."),
+        Program("Домашние тренировки-1", "Дом · гантели, 3 дня", "Домашние тренировки", "Любитель", 8, listOf(1,3,5), fullA, 10, 3, restSeconds = 90, advice = easyAdvice, dayExercises = listOf(fullA, fullB, fullA)),
+        Program("Калистеника-0", "Калистеника · базовая сила", "Калистеника", "Новичок", 8, listOf(2,5), fullA, 6, 3, restSeconds = 120, advice = easyAdvice, dayExercises = listOf(listOf("Отжимания", "Подтягивания", "Планка"), listOf("Отжимания", "Приседания", "Выпады назад")), progression = "Используйте упрощённые варианты и оставляйте 2–3 повтора в запасе. Уменьшайте помощь постепенно, а не добавляйте резкие повторы."),
+        Program("ОФП-0", "ОФП · 3 занятия", "ОФП", "Начинающий", 6, listOf(1,3,5), fullA, 8, 2, restSeconds = 90, advice = easyAdvice, dayExercises = listOf(listOf("Приседания", "Отжимания", "Планка"), listOf("Выпады назад", "Тяга гантели в наклоне", "Ходьба"), listOf("Приседания", "Жим гантелей лёжа", "Растяжка задней поверхности бедра"))),
+        Program("Функциональные тренировки-0", "Функциональная база · 2 дня", "Функциональные тренировки", "Любитель", 6, listOf(2,5), fullA, 8, 3, restSeconds = 90, advice = easyAdvice, dayExercises = listOf(listOf("Приседания", "Отжимания", "Планка"), listOf("Выпады назад", "Тяга гантели в наклоне", "Берпи без прыжка"))),
+        Program("Растяжка-0", "Мягкая подвижность · 3 дня", "Растяжка", "Начинающий", 4, listOf(1,3,5), listOf("Растяжка задней поверхности бедра", "Ходьба"), 1, 1, workSeconds = 30, restSeconds = 20, advice = "Двигайтесь в безболезненном диапазоне, дышите свободно. Это общая практика мобильности; не пружиньте в крайнем положении и остановитесь при боли."),
+        Program("Велоспорт-0", "Велосипед · спокойная база", "Велоспорт", "Начинающий", 6, listOf(2,4,6), listOf("Велосипед", "Растяжка задней поверхности бедра"), 1, 1, workSeconds = 900, restSeconds = 0, advice = "Начинайте с 15 минут лёгкого вращения педалей, сохраняйте разговорное дыхание. Увеличивайте длительность только при хорошем восстановлении."),
+        Program("Смешанные тренировки-0", "Смешанный план · 3 дня", "Смешанные тренировки", "Любитель", 6, listOf(1,3,6), fullA, 8, 2, advice = easyAdvice, dayExercises = listOf(fullA, listOf("Ходьба", "Лёгкий бег"), fullB)),
+        Program("running-0", "Первые шаги в беге", "Бег", "Новичок", 6, listOf(2,4,6), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 6, 60, 90, runAdvice, progression = "Шесть чередований: 60 секунд лёгкого бега и 90 секунд ходьбы. Каждую неделю добавляется не более 10 секунд к беговому интервалу; можно повторить неделю."),
+        Program("running-1", "Ходьба и лёгкий бег", "Бег", "Новичок", 6, listOf(2,5), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 8, 90, 90, runAdvice),
+        Program("running-2", "Подготовка к непрерывному лёгкому бегу", "Бег", "Начинающий", 8, listOf(2,4,6), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 5, 180, 90, runAdvice),
+        Program("running-3", "Беговая выносливость · интервалы", "Бег", "Любитель", 8, listOf(2,5), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 6, 120, 90, runAdvice),
+        Program("running-4", "Подготовка к 5 км · общий план", "Бег", "Любитель", 10, listOf(2,5,7), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 5, 240, 90, runAdvice),
+        Program("running-5", "Подготовка к 10 км · общий план", "Бег", "Любитель", 10, listOf(2,4,7), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 5, 300, 90, runAdvice),
+        Program("running-6", "Аэробная база · лёгкие интервалы", "Бег", "Любитель", 8, listOf(2,5), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 6, 180, 120, runAdvice),
+        Program("running-7", "Короткие интервалы · базовый уровень", "Бег", "Любитель", 6, listOf(2,5), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 6, 60, 120, runAdvice)
     )
-    val programs = directionExercises.flatMap { (direction, names) -> listOf("Новичок", "Любитель", "Продвинутый").mapIndexed { index, level ->
-        Program("$direction-$index", "$direction · $level", direction, level, 4 + index * 2, if(index == 0) listOf(1, 4) else listOf(1, 3, 5), names, 8 + index * 2, 2 + index, if(direction == "Бег") 60 + index * 60 else if(direction == "Велоспорт") 900 + index * 600 else 0, 60 + index * 15)
-    } } + listOf("Первые шаги в беге", "Чередование ходьбы и бега", "Подготовка к непрерывному бегу", "Улучшение результата на 3 км", "Подготовка к 5 км", "Подготовка к 10 км", "Развитие выносливости", "Интервальные тренировки").mapIndexed { i, name ->
-        Program("running-$i", name, "Бег", if(i < 3) "Новичок" else "Любитель", if(i < 3) 6 else 8, listOf(2, 4, 6), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, if(i < 3) 6 else 4, if(i < 3) 60 + i * 30 else 180 + (i - 3) * 120, if(i < 3) 90 else 120,
-            "Разминка: ходьба 5 минут. Повторяйте бег и ходьбу в разговорном темпе. Заминка: ходьба 5 минут. Между занятиями — день восстановления. Увеличивайте длительность только при хорошем самочувствии; целевая дистанция не гарантируется этим общим планом.")
+    private val legacyDirections = setOf("Тренажёрный зал", "Домашние тренировки", "Бег", "Калистеника", "ОФП", "Функциональные тренировки", "Растяжка", "Велоспорт", "Смешанные тренировки")
+    fun programTitle(id: String): String {
+        programs.firstOrNull { it.id == id }?.let { return it.name }
+        val level = id.substringAfterLast('-', "").toIntOrNull()
+        val direction = id.substringBeforeLast('-', "")
+        return if(direction in legacyDirections && level != null && level in 0..2) "$direction · сохранённый план (${listOf("начальный", "средний", "продвинутый")[level]})" else id
     }
     fun schedule(p: Program, start: LocalDate): List<Workout> = (0 until p.weeks * 7).mapNotNull { day ->
         val date = start.plusDays(day.toLong())
@@ -196,7 +210,11 @@ object Catalog {
                 listOf(Training.item(walk).copy(name = "Разминка · ходьба", sets = listOf(SetEntry(reps = 1, seconds = 300)), rest = 0)) +
                     (0 until p.sets).flatMap { listOf(Training.item(run).copy(sets = listOf(SetEntry(reps = 1, seconds = p.workSeconds + week * 10)), rest = 0), Training.item(walk).copy(sets = listOf(SetEntry(reps = 1, seconds = p.restSeconds)), rest = 0)) } +
                     listOf(Training.item(walk).copy(name = "Заминка · ходьба", sets = listOf(SetEntry(reps = 1, seconds = 300)), rest = 0))
-            } else p.exerciseNames.mapNotNull { name -> exercises.find { it.name == name } }.map { e -> Training.item(e).copy(sets = List(p.sets) { SetEntry(reps = p.reps, seconds = if(e.seconds > 0) max(e.seconds, p.workSeconds) else 0) }, rest = p.restSeconds) }
+            } else {
+                val trainingDayIndex = p.weekdays.indexOf(date.dayOfWeek.value).coerceAtLeast(0)
+                val names = p.dayExercises.getOrNull(trainingDayIndex) ?: p.exerciseNames
+                names.mapNotNull { name -> exercises.find { it.name == name } }.map { e -> Training.item(e).copy(sets = List(p.sets) { SetEntry(reps = p.reps, seconds = if(e.seconds > 0) max(e.seconds, p.workSeconds) else 0) }, rest = p.restSeconds) }
+            }
             Workout(name = "${p.name} · неделя ${week + 1}", date = date.toString(), items = items, program = p.id, notes = p.advice)
         }
     }

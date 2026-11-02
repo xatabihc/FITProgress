@@ -11,8 +11,8 @@ android {
         applicationId = "ru.fitprogress.ai"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "2.1-dev"
+        versionCode = 6
+        versionName = "3.0-dev"
         testInstrumentationRunner = "ru.fitprogress.ai.FitTestRunner"
     }
     buildFeatures { compose = true }

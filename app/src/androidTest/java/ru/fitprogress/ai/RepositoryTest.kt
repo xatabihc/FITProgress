@@ -118,4 +118,15 @@ class RepositoryTest {
         } finally { context.settingsStore.updateData { previous } }
     }
 
+    @Test fun savedRunIsImmutableAndNewRecordingUsesAnotherId() = runBlocking {
+        val stamp = ClockStamp(100000, 1000, 1)
+        val completed = RunTimers.finish(RunTimers.resume(Run(status = "paused"), stamp), stamp.copy(elapsedMs = 5000))
+        repo.saveRun(completed); repo.saveRun(completed)
+        assertTrue(runCatching { repo.saveRun(completed.copy(distance = 12345.0)) }.isFailure)
+        val next = RunTimers.resume(Run(status = "paused"), stamp)
+        repo.saveRun(next)
+        assertTrue(runCatching { repo.saveRun(RunTimers.resume(Run(status = "paused"), stamp)) }.isFailure)
+        val all = repo.runs.first(); assertEquals(2, all.size); assertEquals(completed, all.first { it.id == completed.id }); assertNotEquals(completed.id, repo.currentRun()!!.id)
+    }
+
 }

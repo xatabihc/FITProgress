@@ -1,0 +1,2 @@
+Tests use isolated Room/DataStore. Instrumentation stops the app: finish/export any active workout before running.
+Validation passed. Add --run to install and execute on the selected idle test phone. No pm clear/uninstall is used.

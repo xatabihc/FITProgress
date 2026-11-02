@@ -1,3 +1,102 @@
+# Проверки FitProgressAI 3.0-dev
+
+- `./tools/run-domain-tests.sh`: **128 тестов реально пройдены** (лог ниже/`docs/verification/v3.0/junit.txt`).
+- `python3 tools/validate_exercise_asset.py`: **PASS**, 876 уникальных записей с pin/licence, 871 имеют required core fields, пять исключаются.
+- `python3 tools/offline-android-build.py --android-tests --package`: Kotlin/Compose compilation и Room Processor/javac PASS; Android test compilation PASS. 24 Android tests compiled, **not executed**. D8/AAPT2/zipalign/apksigner build PASS.
+- `./gradlew assembleDebug testDebugUnitTest lintDebug`: остановился на read-only `gradle-8.11.1-bin.zip.lck` до задач. Не считать Gradle build/test/Lint успешными.
+- ADB devices listing показывает подключённое устройство, но любая shell-задача блокируется невозможностью создать `tcp:5037` listener. Не установлено, не нажимали экран, не забирали logcat.
+
+Каталог тесты: русское/английское частичное имя, мышцы, yo folding, combined filters; Android source test проверяет asset, уникальность, маркеры, импорт и реальный search. Последний test скомпилирован, device not run. Статический `verify-apk`/fingerprint не является UI/runtime test.
+
+## APK и ручная проверка
+
+Основной APK: `app/build/outputs/apk/debug/app-debug.apk`; test APK: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`. Для следующего прогона на разблокированном тестовом устройстве выполнить Gradle Android build, обновить через `adb install -r` той же подписью и только затем `./gradlew connectedDebugAndroidTest`; инструментальный runner использует изолированные Room/DataStore. Не удалять данные приложения. Проверить 320dp/увеличенный font, поиск на RU/EN, GPS при экране locked, геолокация без GMS, map offline fallback, импорт/перезапуск.
+
+Открытый справочник: [free-exercise-db](https://github.com/yuhonas/free-exercise-db), [Unlicense](https://github.com/yuhonas/free-exercise-db/blob/main/LICENSE.md). See `app/src/main/assets/EXERCISE_DATA_LICENSE.txt`.
+
+---
+
+Исторические протоколы 2.1-dev/rc1/rc2:
+
+# GPS start regression — 2.1-rc2
+
+**Реально выполнены 122 JVM-теста**: прежние 110 и 12 RunLaunchTest. Проверяются success без первой точки (таймер растёт, distance=0), запрос/отказ permission, disabled location, SecurityException/IllegalStateException, async subscription error, двойное нажатие, retry/timeout и старый timeout новой попытки. Это тест логики, не запуск Android-сервиса.
+
+**23 Android-теста скомпилированы, но не исполнены**: прежние20, 2 новых RunStartUiTest (ошибка+retry и disabled pending button) и GpsServiceStartTest (opt-in реального сервиса). По умолчанию GPS-тест пропускается через assumption. Диагностика/логи: `docs/verification/v2.1-rc2/`.
+
+Запуск обычных тестов на тестовом телефоне описан ниже; скрипт `tools/run-phone-tests.py --serial SERIAL --run` проверяет безопасный FitTestRunner и не выполняет uninstall/pm clear. Сначала завершить текущую production тренировку, экспортировать историю: instrumentation останавливает процесс, даже при отдельном тестовом хранилище.
+
+Для отдельного **реального GPS service test** на тестовом устройстве после установки обоих APK и включения геолокации:
+
+```bash
+adb shell pm grant ru.fitprogress.ai android.permission.ACCESS_COARSE_LOCATION
+adb shell pm grant ru.fitprogress.ai android.permission.ACCESS_FINE_LOCATION
+# Только Android33+:
+adb shell pm grant ru.fitprogress.ai android.permission.POST_NOTIFICATIONS
+adb shell am instrument -w -e gpsService true -e class ru.fitprogress.ai.GpsServiceStartTest ru.fitprogress.ai.test/ru.fitprogress.ai.FitTestRunner
+```
+
+Тест запускает видимую Activity, настоящий FGS, проверяет active/рост секундомера/FGS notification, завершает тестовую пробежку в isolated DB. Не требует искусственной первой координаты. Физическую точность, дальность, lock screen и fallback без GMS нужно проверять отдельно реальной прогулкой. Не запускать во время production записи.
+
+Диагностика пользовательского нажатия (без instrumentation, в обычной базе):
+
+```bash
+adb logcat -v threadtime -s FitRunStart AndroidRuntime
+```
+
+Нажать «Начать пробежку» и сохранить журнал. Ожидается UI start → Permission result (если нужен) → Dispatch service → onCreate/onStartCommand → Location backend=fused/android-gps → Run active. Если ошибка — она видна возле кнопки с кодом. Включённая геолокация и точное разрешение обязательны; интернет и первая GPS-точка для секундомера не нужны. Отказ POST_NOTIFICATIONS не блокирует FGS, но может скрыть уведомление из шторки.
+
+Не проверены здесь: фактический старт/запросы разрешений на телефоне, реальный GMS fallback, lock screen, OEM/Doze, визуальное поведение UI. ADB запрещён средой, logcat получить не удалось. Стандартный Gradle/Lint не выполнен, APK собирается SDK fallback.
+
+---
+
+Предыдущий этап (историческая матрица):
+
+# Проверки стабилизации 2.1-rc1
+
+Реально выполнены: **110 JVM/JUnit-тестов**, компиляция основного Android/Compose кода и нового Room-кода, компиляция **20 Android-тестов**. Исполнение Room/ViewModel/Compose на Android **не выполнено**. Логи текущего этапа: `docs/verification/v2.1-rc1/`.
+
+Новые JVM-регрессии: завершённую пробежку нельзя возобновить; повторный finish сохраняет историю; удаление timed упражнения отменяет deadline; перестановка сохраняет валидный timer; импорт очищает монотонный anchor завершённого занятия; очередь действий сохраняет порядок и переживает ошибку/отмену.
+
+Новые Android-тесты: настоящий ViewModel/main dispatcher + in-memory Room проверяют complete→finish, восстановление paused результата и отдыха в новом ViewModel, ошибку JSON без стирания истории и блокировку двойного exclusive. Repository проверяет неизменяемость завершённого бега. Существующий тест Room migration открывает базу v1 через реальный Room v2; до запуска на Android его результат неизвестен.
+
+## Прогон на смартфоне
+
+Завершите текущую тренировку и экспортируйте JSON. Instrumentation останавливает процесс, хотя тесты используют отдельные `fitprogress-instrumentation.db`/`profile-instrumentation` и не очищают production данные. Используйте тестовый профиль/устройство.
+
+Предпочтительный путь:
+
+```bash
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+adb devices
+python3 tools/run-phone-tests.py --serial SERIAL
+python3 tools/run-phone-tests.py --serial SERIAL --run
+```
+
+Скрипт сначала проверяет подписи и безопасный FitTestRunner, использует только install -r (без uninstall/pm clear), на Android33+ разрешает уведомления для UI-прогона. Проверяет итоговый JUnit-результат. Без --run только проверяет APK. Для этой ограниченной среды доступна дополнительная упаковка тестов из прежних Gradle intermediates:
+
+```bash
+./tools/run-domain-tests.sh
+python3 tools/offline-android-build.py --android-tests --package
+python3 tools/package-android-tests.py
+```
+
+Основной APK: `app/build/outputs/apk/debug/app-debug.apk`.
+Тестовый APK: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`.
+Старый APK в `obsolete-before-2.1` не запускать. SDK fallback не заменяет стандартный Gradle/Lint.
+
+## Оставшиеся обязательные ручные проверки
+
+- Обновление 2.0→rc1 той же подписью без удаления приложения: прежние упражнения, подходы, история, маршруты, профиль; сравнить экспорт до/после. SQL на 10 000 строк и подпись APK не доказывают успешное обновление телефона.
+- GPS: точное разрешение и включённая геолокация/GMS, реальная прогулка/бег 15–30 минут с выключенным экраном и интернетом; постоянное уведомление, маршрут/дистанция/время, pause→move→resume без соединения сегментов. Отдельно проверить отказ/отзыв разрешения, provider off, stationary drift. Демо/mock не считать реальным GNSS.
+- Незавершённая тренировка: подход+отдых, background, recreate/rotation, удаление процесса, relaunch, reboot; результат сохранён, после reboot время выключенного телефона не засчитано.
+- Экран 320dp/большой системный шрифт/клавиатура: диалоги параметров/подхода/завершения/ручного бега прокручиваются; действие сохранения доступно; длинные названия и TalkBack.
+- Foreground service/уведомления/Doze/звук/вибрация и энергосбережение OEM. Все эти Android runtime-сценарии здесь **не проверены**.
+
+---
+
+Предыдущая матрица 2.1-dev (историческая):
+
 # Проверки FitProgressAI 2.1-dev
 
 ## Фактическая матрица

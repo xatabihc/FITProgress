@@ -1,0 +1,3 @@
+Test APK: /home/xatabihc/Projects/FitProgressAI/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+SHA256: 54ca86e7714aa8e68730dd042dd9528c78fb454bdffe660100531532354a69a4
+Compiled and packaged only; NOT executed.

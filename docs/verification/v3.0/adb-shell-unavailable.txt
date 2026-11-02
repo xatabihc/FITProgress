@@ -1,0 +1,4 @@
+A read-only ADB shell command was attempted:
+/home/xatabihc/Android/Sdk/platform-tools/adb shell getprop ro.build.version.sdk
+
+Result: adb server could not create the *smartsocket* listener (Operation not permitted), so it could not connect. Device is visible to the approved devices-list query; package inspection, logcat, install, tap, and connected tests were not run.

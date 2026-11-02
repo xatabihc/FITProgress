@@ -61,9 +61,21 @@ private val Accent = Color(0xFFB4F667)
         val sessions by vm.workouts.collectAsStateWithLifecycle()
         val activeId = sessions.firstOrNull { it.status in listOf("active", "paused") }?.id
         val context = LocalContext.current
-        LaunchedEffect(activeId) { if(activeId != null) { (context.applicationContext as FitApp).ready.await(); runCatching { WorkoutTimerService.start(context) }.onFailure { vm.notify("Фоновый таймер не запущен: ${it.message}") } } }
+        LaunchedEffect(activeId) {
+            if(activeId != null) {
+                try { (context.applicationContext as FitApp).ready.await() }
+                catch(error: kotlinx.coroutines.CancellationException) { throw error }
+                catch(error: Exception) { vm.loadFailure.value = "Не удалось восстановить локальное состояние. История не удалялась. Перезапустите приложение."; return@LaunchedEffect }
+                try { WorkoutTimerService.start(context) }
+                catch(error: kotlinx.coroutines.CancellationException) { throw error }
+                catch(error: Exception) { vm.notify("Фоновый таймер не запущен: ${error.message}") }
+            }
+        }
+        val loadFailure by vm.loadFailure.collectAsStateWithLifecycle()
+        if(loadFailure != null) AlertDialog(onDismissRequest = {}, title = { Text("Ошибка чтения данных") }, text = { Text(loadFailure!!) }, confirmButton = { TextButton(onClick = { (context as? android.app.Activity)?.finish() }) { Text("Закрыть") } })
         val snackbar = remember { SnackbarHostState() }; val busy by vm.busy.collectAsStateWithLifecycle()
         LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(it) } }
+        LaunchedEffect(Unit) { WorkoutTimerService.failure.collect { if(it != null) snackbar.showSnackbar(it) } }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(route !in listOf("home", "catalog", "calendar", "running", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
@@ -128,7 +140,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { Action("Дневник самочувствия", Icons.Default.Favorite) { navigate("wellbeing") } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { navigate("programs") }, modifier = Modifier.weight(1f)) { Text("Программы") }; OutlinedButton(onClick = { navigate("catalog") }, modifier = Modifier.weight(1f)) { Text("Упражнения") } } }
         val programs = all.filter { it.program.isNotBlank() && it.status != "done" && !it.template }.groupBy { it.program }
-        if(programs.isNotEmpty()) item { Panel { Text("Активные программы", style = MaterialTheme.typography.titleLarge); programs.forEach { (id, list) -> Text("${Catalog.programs.find { it.id == id }?.name ?: id}: ${list.size} занятий впереди") } } }
+        if(programs.isNotEmpty()) item { Panel { Text("Активные программы", style = MaterialTheme.typography.titleLarge); programs.forEach { (id, list) -> Text("${Catalog.programTitle(id)}: ${list.size} занятий впереди") } } }
         val recent = all.filter { it.status == "done" }.maxByOrNull { it.ended }
         if(recent != null) item { Panel { Text("Последний результат", style = MaterialTheme.typography.titleLarge); Text("${recent.name}: ${recent.completedSets()} подходов · ${"%.0f".format(recent.volume())} кг объёма"); TextButton(onClick = { open(recent.id) }) { Text("Открыть историю") } } }
         item { Action("План следующей недели", Icons.Default.AutoGraph) { navigate("recommendations") } }
@@ -136,13 +148,22 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 }
 @Composable fun CatalogScreen(vm: FitViewModel, edit: (String) -> Unit) {
     val exercises by vm.exercises.collectAsStateWithLifecycle(); var query by rememberSaveable { mutableStateOf("") }; var category by rememberSaveable { mutableStateOf("Все") }
+    var equipment by rememberSaveable { mutableStateOf("Любое") }; var level by rememberSaveable { mutableStateOf("Любой") }
+    val search = remember(exercises) { ExerciseSearchIndex(exercises) }
+    val equipmentOptions = remember(exercises) { listOf("Любое") + exercises.map { it.equipment }.distinct().sorted() }
+    val levelOptions = listOf("Любой", "Начинающий", "Средний", "Продвинутый", "Не указан источником")
+    val matches = remember(search, query, category, equipment, level) { search.filter(query, category, equipment, level) }
     Page {
-        item { Title("Движение — основа", "Каталог упражнений · работает без интернета") }
+        item { Title("Каталог упражнений", "${search.size} записей · поиск на устройстве · офлайн") }
         item { Field("Поиск упражнения", query, { query = it }) }
         item { Choice(listOf("Все") + categories, category) { category = it } }
+        item { Choice(equipmentOptions, equipment) { equipment = it } }
+        item { Choice(levelOptions, level) { level = it } }
+        item { Text("Найдено: ${matches.size}", style = MaterialTheme.typography.labelMedium) }
         item { Action("Создать упражнение") { edit("new") } }
-        items(exercises.filter { (category == "Все" || it.category == category) && it.name.contains(query, true) }, key = { it.id }) { e ->
-            Card(onClick = { edit(e.id) }, shape = RoundedCornerShape(22.dp)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { ExerciseArt(e, Modifier.size(76.dp)); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(e.name, fontWeight = FontWeight.Bold); Text(e.category, color = MaterialTheme.colorScheme.primary); Text("${e.sets} × ${if(e.seconds > 0) "${e.seconds} сек" else "${e.reps} повт"} · ${e.equipment}", style = MaterialTheme.typography.bodySmall) } } }
+        if(matches.isEmpty()) item { Empty("Ничего не найдено. Измените фильтры или создайте своё упражнение.") }
+        items(matches, key = { it.id }) { e ->
+            Card(onClick = { edit(e.id) }, shape = RoundedCornerShape(22.dp)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { ExerciseArt(e, Modifier.size(76.dp)); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(e.name, fontWeight = FontWeight.Bold); Text(e.category, color = MaterialTheme.colorScheme.primary); Text("${e.sets} × ${if(e.seconds > 0) "${e.seconds} сек" else "${e.reps} повт"} · ${e.equipment}", style = MaterialTheme.typography.bodySmall); OpenExerciseLibrary.sourceInfo(e.id)?.let { Text("${it.level} · ${if(it.type.isBlank()) "упражнение" else it.type}", style = MaterialTheme.typography.labelSmall) } } } }
         }
     }
 }
@@ -160,6 +181,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     fun build(copy: Boolean): Exercise = initial.copy(id = if(initial.builtIn || copy) newId() else initial.id, name = name.trim(), category = category, technique = technique, muscles = muscles, equipment = equipment, imageUri = image, sets = sets.toIntOrNull() ?: -1, reps = reps.toIntOrNull() ?: -1, weight = weight.replace(',', '.').toDoubleOrNull() ?: -1.0, seconds = seconds.toIntOrNull() ?: -1, rest = rest.toIntOrNull() ?: -1, notes = notes, builtIn = false)
     Page {
         item { Title(if(id == "new") "Новое упражнение" else initial.name, if(initial.builtIn) "Сохранение создаст вашу версию упражнения" else "Ваше упражнение") }
+        OpenExerciseLibrary.sourceInfo(initial.id)?.let { info -> item { Text("Оригинальное название: ${info.englishName} · ${info.level}. Пошаговая инструкция предоставлена на английском из открытого источника.", style = MaterialTheme.typography.bodySmall) } }
         item { ExerciseArt(initial.copy(imageUri = image), Modifier.fillMaxWidth().height(180.dp)) }
         item { OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }) { Text("Выбрать изображение") } }
         item { Field("Название", name, { name = it }) }; item { Choice(categories, category) { category = it } }
@@ -288,15 +310,15 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 }
 @Composable fun MetadataDialog(w: Workout, dismiss: () -> Unit, save: (String, String, String) -> Unit) {
     var name by rememberSaveable { mutableStateOf(w.name) }; var date by rememberSaveable { mutableStateOf(w.date) }; var notes by rememberSaveable { mutableStateOf(w.notes) }; var error by rememberSaveable { mutableStateOf("") }
-    AlertDialog(onDismissRequest = dismiss, title = { Text("План тренировки") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Field("Название", name, { name = it }); Field("Дата, ГГГГ-ММ-ДД", date, { date = it }); Field("Заметки", notes, { notes = it }, lines = 2); if(error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error) } }, confirmButton = { TextButton(onClick = { if(name.isNotBlank() && name.length <= 200 && runCatching { LocalDate.parse(date) }.isSuccess) save(name.trim(), date, notes) else error = "Введите название и дату в формате 2026-11-01" }) { Text("Сохранить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
+    AlertDialog(onDismissRequest = dismiss, title = { Text("План тренировки") }, text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) { Field("Название", name, { name = it }); Field("Дата, ГГГГ-ММ-ДД", date, { date = it }); Field("Заметки", notes, { notes = it }, lines = 2); if(error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error) } }, confirmButton = { TextButton(onClick = { if(name.isNotBlank() && name.length <= 200 && runCatching { LocalDate.parse(date) }.isSuccess) save(name.trim(), date, notes) else error = "Введите название и дату в формате 2026-11-01" }) { Text("Сохранить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
 }
 @Composable fun ItemDialog(i: WorkoutItem, dismiss: () -> Unit, save: (WorkoutItem) -> Unit) {
     var rest by rememberSaveable { mutableStateOf(i.rest.toString()) }; var group by rememberSaveable { mutableStateOf(i.superset) }; var notes by rememberSaveable { mutableStateOf(i.notes) }; var error by rememberSaveable { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = dismiss, title = { Text("Настройки упражнения") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Field("Отдых, сек", rest, { rest = it }, true); Field("Группа суперсета (например A)", group, { group = it }); Text("Одинаковая группа объединяет упражнения. Для перехода без отдыха задайте 0 секунд.", style = MaterialTheme.typography.bodySmall); Field("Заметки", notes, { notes = it }, lines = 2); if(error) Text("Отдых: целое число от 0 до 3600") } }, confirmButton = { TextButton(onClick = { val r = rest.toIntOrNull(); if(r != null && r in 0..3600) save(i.copy(rest = r, superset = group.trim(), notes = notes)) else error = true }) { Text("Сохранить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
+    AlertDialog(onDismissRequest = dismiss, title = { Text("Настройки упражнения") }, text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) { Field("Отдых, сек", rest, { rest = it }, true); Field("Группа суперсета (например A)", group, { group = it }); Text("Одинаковая группа объединяет упражнения. Для перехода без отдыха задайте 0 секунд.", style = MaterialTheme.typography.bodySmall); Field("Заметки", notes, { notes = it }, lines = 2); if(error) Text("Отдых: целое число от 0 до 3600") } }, confirmButton = { TextButton(onClick = { val r = rest.toIntOrNull(); if(r != null && r in 0..3600) save(i.copy(rest = r, superset = group.trim(), notes = notes)) else error = true }) { Text("Сохранить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
 }
 @Composable fun FinishDialog(dismiss: () -> Unit, save: (Int, Int, Boolean) -> Unit) {
     var effort by rememberSaveable { mutableFloatStateOf(5f) }; var recovery by rememberSaveable { mutableFloatStateOf(7f) }; var pain by rememberSaveable { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = dismiss, title = { Text("Завершить тренировку") }, text = { Column { Text("Сохранятся фактически выполненные подходы. Можно завершить досрочно."); Text("Сложность: ${effort.roundToInt()}/10"); Slider(effort, { effort = it }, valueRange = 1f..10f, steps = 8); Text("Восстановление: ${recovery.roundToInt()}/10"); Slider(recovery, { recovery = it }, valueRange = 1f..10f, steps = 8); Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(pain, { pain = it }); Text("Во время занятия была боль", Modifier.weight(1f)) } } }, confirmButton = { TextButton(onClick = { save(effort.roundToInt(), recovery.roundToInt(), pain) }) { Text("Сохранить результат") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Продолжить занятие") } })
+    AlertDialog(onDismissRequest = dismiss, title = { Text("Завершить тренировку") }, text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) { Text("Сохранятся фактически выполненные подходы. Можно завершить досрочно."); Text("Сложность: ${effort.roundToInt()}/10"); Slider(effort, { effort = it }, valueRange = 1f..10f, steps = 8); Text("Восстановление: ${recovery.roundToInt()}/10"); Slider(recovery, { recovery = it }, valueRange = 1f..10f, steps = 8); Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(pain, { pain = it }); Text("Во время занятия была боль", Modifier.weight(1f)) } } }, confirmButton = { TextButton(onClick = { save(effort.roundToInt(), recovery.roundToInt(), pain) }) { Text("Сохранить результат") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Продолжить занятие") } })
 }
 @Composable fun RestDialog(initial: Int, dismiss: () -> Unit, save: (Int) -> Unit) {
     var seconds by rememberSaveable { mutableStateOf(initial.toString()) }; var error by remember { mutableStateOf(false) }
@@ -366,25 +388,32 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     }
 }
 @Composable fun RunningScreen(vm: FitViewModel, detail: (String) -> Unit) {
-    val runs by vm.runs.collectAsStateWithLifecycle(); val current = runs.firstOrNull { it.status != "done" && !it.demo }; val now = clockNow(); val context = LocalContext.current
+    val runs by vm.runs.collectAsStateWithLifecycle(); val current = runs.firstOrNull { it.status != "done" && !it.demo }; val tick = clockNow(); val context = LocalContext.current
+    val stamp = remember(tick) { AndroidClock.read(context) }
+    val launch by vm.runLaunch.collectAsStateWithLifecycle()
     val signal by RunService.signal.collectAsStateWithLifecycle(); var finish by remember { mutableStateOf(false) }; var manual by rememberSaveable { mutableStateOf(false) }
-    fun startRun() { runCatching { RunService.command(context, if(current == null) RunService.START else RunService.RESUME) }.onFailure { vm.notify("Запись не запущена: ${it.message}") } }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted -> if(granted[Manifest.permission.ACCESS_FINE_LOCATION] == true || context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) startRun() else vm.notify("Для записи нужна точная геолокация. Разрешите её в настройках приложения.") }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.runPermissionResult() }
     Page {
-        item { Title("Бег в твоём ритме", "Реальный GPS · запись при заблокированном экране") }
+        item { Title(if(current?.status == "active") "Пробежка идёт" else "Бег в твоём ритме", "Реальный GPS · запись при заблокированном экране") }
         item { Panel {
             Text(signal, color = MaterialTheme.colorScheme.primary)
             Metric("Дистанция", "%.2f км".format((current?.distance ?: 0.0) / 1000))
-            Metric("Время", formatTime(current?.let { RunTimers.elapsed(it, AndroidClock.read(context)) } ?: 0))
-            Column { Metric("Средний темп", formatPace(current?.let { Gps.pace(it.distance, RunTimers.elapsed(it, AndroidClock.read(context))) })); Metric("Скорость, км/ч", "%.1f".format(current?.let { Gps.speed(it.distance, RunTimers.elapsed(it, AndroidClock.read(context))) } ?: 0.0)) }
-            val pace = if(current?.status == "active") Gps.currentPaceAt(current.points, AndroidClock.read(context)) else null
+            Metric("Время", formatTime(current?.let { RunTimers.elapsed(it, stamp) } ?: 0))
+            Column { Metric("Средний темп", formatPace(current?.let { Gps.pace(it.distance, RunTimers.elapsed(it, stamp)) })); Metric("Скорость, км/ч", "%.1f".format(current?.let { Gps.speed(it.distance, RunTimers.elapsed(it, stamp)) } ?: 0.0)) }
+            val pace = if(current?.status == "active") Gps.currentPaceAt(current.points, stamp) else null
             Text("Текущий темп: ${formatPace(pace)}"); Text("Текущая скорость: ${pace?.let { "%.1f км/ч".format(60 / it) } ?: "—"}")
         } }
         if(current != null) item { UserMap(vm, current.points) }
-        if(current?.status != "active") item { Action(if(current == null) "Начать пробежку" else "Продолжить пробежку", Icons.Default.PlayArrow) {
-            val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-            if(Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
-            if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) permission.launch(permissions.toTypedArray()) else { if(Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) permission.launch(permissions.toTypedArray()) else startRun() }
+        item {
+            if(launch.pending) Text(if(launch.phase == RunLaunchPhase.PERMISSION) "Ожидаем разрешение геолокации…" else "Запускаем запись GPS…")
+            if(launch.phase == RunLaunchPhase.ERROR) {
+                Text(launch.error!!.message, color = MaterialTheme.colorScheme.error)
+                if(launch.diagnostic.isNotBlank()) Text("Код: ${launch.diagnostic}", style = MaterialTheme.typography.bodySmall)
+                if(launch.error == RunLaunchError.PERMISSION) OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${context.packageName}"))) }) { Text("Разрешения приложения") }
+            }
+        }
+        if(current?.status != "active" || launch.phase == RunLaunchPhase.ERROR) item { Action(if(launch.phase == RunLaunchPhase.ERROR) "Повторить запуск" else if(current == null) "Начать пробежку" else "Продолжить пробежку", Icons.Default.PlayArrow, enabled = !launch.pending) {
+            vm.requestRunStart { permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }
         } }
         if(current?.status == "active") item { Action("Пауза", Icons.Default.Pause) { runCatching { RunService.command(context, RunService.PAUSE) }.onFailure { vm.notify(it.message ?: "Не удалось поставить на паузу") } } }
         if(current != null) item { Action("Завершить и сохранить", Icons.Default.Stop) { finish = true } }

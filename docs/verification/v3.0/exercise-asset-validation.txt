@@ -1,0 +1,1 @@
+PASS: 876 unique pinned records; 871 meet name/target/technique minimum; 5 incomplete records are excluded by loader.
