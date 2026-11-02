@@ -129,4 +129,16 @@ class RepositoryTest {
         val all = repo.runs.first(); assertEquals(2, all.size); assertEquals(completed, all.first { it.id == completed.id }); assertNotEquals(completed.id, repo.currentRun()!!.id)
     }
 
+    @Test fun favoriteRoutePersistsInExistingPersonalRecordsWithoutChangingWorkoutHistory() = runBlocking {
+        val workout = Workout(name = "Историческая тренировка", status = "done", ended = System.currentTimeMillis())
+        repo.save(workout)
+        val favorite = NavigationRoute(name = "Парк", mode = RouteMode.WALK.name, points = listOf(RouteCoordinate(55.0, 37.0), RouteCoordinate(55.001, 37.0)), distanceMeters = 111.2)
+        repo.saveRoute(favorite)
+        assertEquals(favorite, repo.savedRoutes.first().single())
+        assertEquals(workout, repo.workouts.first().single())
+        repo.deleteRoute(favorite.id)
+        assertTrue(repo.savedRoutes.first().isEmpty())
+        assertEquals(workout, repo.workouts.first().single())
+    }
+
 }

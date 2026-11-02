@@ -23,12 +23,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 class RunService : Service() {
     companion object {
-        const val START = "start"; const val PAUSE = "pause"; const val RESUME = "resume"; const val FINISH = "finish"
+        const val START = "start"; const val PAUSE = "pause"; const val RESUME = "resume"; const val FINISH = "finish"; const val UPDATE_ROUTE = "update-route"; private const val EXTRA_ROUTE = "navigation-route"
         val launch = RunLaunchController()
         val signal = MutableStateFlow("Запись не запущена")
         val running = MutableStateFlow(false)
-        fun command(context: Context, action: String) {
+        fun command(context: Context, action: String, route: NavigationRoute? = null) {
             val intent = Intent(context, RunService::class.java).setAction(action)
+            if(route != null) intent.putExtra(EXTRA_ROUTE, BackupCodec.gson.toJson(route))
             Log.i("FitRunStart", "Dispatch service action=$action")
             try {
                 if(action == START || action == RESUME) ContextCompat.startForegroundService(context, intent) else context.startService(intent)
@@ -119,8 +120,10 @@ class RunService : Service() {
                     if(current?.status == "active") { launch.active(); return@trySend }
                     if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) { launch.fail(RunLaunchError.PERMISSION); signal.value = RunLaunchError.PERMISSION.message; stopSelf(); return@trySend }
                     if(!getSystemService(LocationManager::class.java).isLocationEnabled) { launch.fail(RunLaunchError.LOCATION_DISABLED); signal.value = RunLaunchError.LOCATION_DISABLED.message; stopSelf(); return@trySend }
+                    val requestedRoute = intent?.getStringExtra(EXTRA_ROUTE)?.let { BackupCodec.gson.fromJson(it, NavigationRoute::class.java).also(RouteMath::validate) }
                     val old = current?.takeIf { it.status != "done" } ?: repo.currentRun()
-                    current = RunTimers.resume(old ?: Run(status = "paused", activeSince = 0), AndroidClock.read(this@RunService))
+                    val base = old ?: Run(status = "paused", activeSince = 0)
+                    current = RunTimers.resume(base.copy(navigation = requestedRoute ?: base.navigation), AndroidClock.read(this@RunService))
                     repo.saveRun(current!!)
                     lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "Ожидаем точные координаты GPS"; running.value = true
                     acquireRunWakeLock()
@@ -136,6 +139,12 @@ class RunService : Service() {
                     }
                 }
                 PAUSE -> { if(current == null) current = repo.currentRun(); pauseInternal(); launch.idle(); signal.value = "Пробежка на паузе" }
+                UPDATE_ROUTE -> {
+                    if(current == null) current = repo.currentRun()
+                    val route = intent?.getStringExtra(EXTRA_ROUTE)?.let { BackupCodec.gson.fromJson(it, NavigationRoute::class.java).also(RouteMath::validate) } ?: error("Новый маршрут не передан")
+                    val run = current?.takeIf { it.status != "done" } ?: error("Нет активной пробежки")
+                    current = run.copy(navigation = route); repo.saveRun(current!!); signal.value = "Маршрут навигации обновлён"
+                }
                 FINISH -> {
                     if(current == null) current = repo.currentRun()
                     current?.takeIf { it.status != "done" }?.let { val done = RunTimers.finish(it, AndroidClock.read(this@RunService)); repo.saveRun(done); current = done }

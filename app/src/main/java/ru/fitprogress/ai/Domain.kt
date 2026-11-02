@@ -33,7 +33,8 @@ data class Run(
     val id: String = newId(), val started: Long = System.currentTimeMillis(), val ended: Long = 0,
     val points: List<GeoPoint> = emptyList(), val distance: Double = 0.0, val accumulatedMs: Long = 0,
     val activeSince: Long = System.currentTimeMillis(), val status: String = "active", val segment: Int = 0,
-    val demo: Boolean = false, val timing: MonotonicTiming? = null, val recordingMode: String = "gps", val movingMs: Long = 0, val lastAnnouncedKm: Int = 0
+    val demo: Boolean = false, val timing: MonotonicTiming? = null, val recordingMode: String = "gps", val movingMs: Long = 0, val lastAnnouncedKm: Int = 0,
+    val navigation: NavigationRoute? = null
 ) {
     fun elapsed(now: Long) = (accumulatedMs + if (status == "active") max(0, now - activeSince) else 0).coerceAtLeast(0)
 }

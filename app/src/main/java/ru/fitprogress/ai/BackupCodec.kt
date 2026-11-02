@@ -5,7 +5,7 @@ import com.google.gson.JsonParser
 import java.time.LocalDate
 import java.security.MessageDigest
 
-data class Backup(val format: String = "FitProgressAI", val version: Int = 3, val exercises: List<Exercise> = emptyList(), val workouts: List<Workout> = emptyList(), val runs: List<Run> = emptyList(), val goals: List<SportGoal> = emptyList(), val wellbeing: List<Wellbeing> = emptyList(), val coachReceipts: List<CoachReceipt> = emptyList())
+data class Backup(val format: String = "FitProgressAI", val version: Int = 4, val exercises: List<Exercise> = emptyList(), val workouts: List<Workout> = emptyList(), val runs: List<Run> = emptyList(), val goals: List<SportGoal> = emptyList(), val wellbeing: List<Wellbeing> = emptyList(), val coachReceipts: List<CoachReceipt> = emptyList(), val savedRoutes: List<NavigationRoute> = emptyList())
 object BackupCodec {
     val gson = Gson()
     private fun digest(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
@@ -20,11 +20,12 @@ object BackupCodec {
         val root = JsonParser.parseString(text).asJsonObject
         val checksum = root.remove("sha256")?.asString ?: error("В копии нет контрольной суммы")
         require(checksum == digest(gson.toJson(root))) { "Контрольная сумма не совпадает: файл повреждён или изменён" }
-        require(root.get("format")?.asString == "FitProgressAI" && root.get("version")?.asInt in listOf(1, 2, 3)) { "Неизвестный формат или версия" }
+        require(root.get("format")?.asString == "FitProgressAI" && root.get("version")?.asInt in listOf(1, 2, 3, 4)) { "Неизвестный формат или версия" }
         listOf("exercises", "workouts", "runs").forEach { require(root.has(it) && root[it].isJsonArray) { "Отсутствует таблица $it" } }
         for(key in listOf("goals", "wellbeing", "coachReceipts")) {
             require((root.get("version").asInt < 3 && !root.has(key)) || root.has(key) && root[key].isJsonArray) { "Некорректная таблица $key в резервной копии" }
         }
+        require((root.get("version").asInt < 4 && !root.has("savedRoutes")) || root.has("savedRoutes") && root["savedRoutes"].isJsonArray) { "Некорректный список сохранённых маршрутов" }
         val b = gson.fromJson(text, Backup::class.java)
         require(b.exercises.size <= 10000 && b.workouts.size <= 20000 && b.runs.size <= 10000) { "Слишком много записей" }
         require((b.exercises.map { it.id }).distinct().size == b.exercises.size)
@@ -38,7 +39,10 @@ object BackupCodec {
         b.workouts.forEach(::validateWorkout)
         require(b.workouts.count { it.status in listOf("active", "paused") } <= 1) { "Несколько активных тренировок" }
         b.runs.forEach { r -> require(r.id.isNotBlank() && r.status in listOf("active", "paused", "done") && r.started > 0 && r.ended >= 0 && r.accumulatedMs >= 0 && r.activeSince >= 0 && r.distance.isFinite() && r.distance >= 0 && r.points.size <= 200000); r.points.forEach { require(Gps.valid(it) && (it.elapsedMs == null || it.elapsedMs >= 0)) }; require(r.recordingMode in listOf("gps", "manual") && r.movingMs >= 0 && r.lastAnnouncedKm >= 0 && r.lastAnnouncedKm <= r.distance / 1000); require((!r.demo && r.recordingMode != "manual") || r.status == "done"); require(r.recordingMode != "manual" || r.points.isEmpty()); require(r.points.zipWithNext().all { it.first.segment != it.second.segment || Gps.durationBetween(it.first, it.second) > 0 }) }
+        b.runs.mapNotNull { it.navigation }.forEach(RouteMath::validate)
         require(b.runs.count { it.status != "done" } <= 1)
+        require(b.savedRoutes.size <= 1000 && b.savedRoutes.map { it.id }.distinct().size == b.savedRoutes.size)
+        b.savedRoutes.forEach(RouteMath::validate)
         return b
     }
     fun validateWorkout(w: Workout) {

@@ -99,7 +99,8 @@ private val Accent = Color(0xFFB4F667)
                     composable("calendar") { CalendarScreen(vm, { nav.navigate("workout/$it") }) }
                     composable("programs") { ProgramsScreen(vm, { nav.navigate("calendar") }, { nav.navigate("plan/$it") }) }
                     composable("plan/{id}") { PlanEditorScreen(vm, it.arguments?.getString("id") ?: "") }
-                    composable("running") { RunningScreen(vm, { nav.navigate("run/$it") }) }
+                    composable("running") { RunningScreen(vm, { nav.navigate("run/$it") }, { nav.navigate("route-builder") }) }
+                    composable("route-builder") { RouteBuilderScreen(vm, { nav.navigate("running") }) }
                     composable("run/{id}") { RunDetail(vm, it.arguments?.getString("id") ?: "") }
                     composable("stats") { StatsScreen(vm, { nav.navigate("analysis") }) }
                     composable("settings") { SettingsScreen(vm) }
@@ -119,7 +120,7 @@ private val Accent = Color(0xFFB4F667)
 @Composable fun Action(text: String, icon: ImageVector = Icons.Default.Add, enabled: Boolean = true, click: () -> Unit) { Button(onClick = click, enabled = enabled, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) { Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text(text) } }
 @Composable fun Metric(label: String, value: String) { Column(Modifier.padding(vertical = 4.dp)) { Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary); Text(label, style = MaterialTheme.typography.labelMedium) } }
 @Composable fun Empty(text: String) { Panel { Icon(Icons.Default.SportsGymnastics, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)); Text(text) } }
-@Composable fun Field(label: String, value: String, change: (String) -> Unit, numeric: Boolean = false, lines: Int = 1) { OutlinedTextField(value = value, onValueChange = change, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), singleLine = lines == 1, minLines = lines, keyboardOptions = KeyboardOptions(keyboardType = if(numeric) KeyboardType.Decimal else KeyboardType.Text)) }
+@Composable fun Field(label: String, value: String, change: (String) -> Unit, numeric: Boolean = false, lines: Int = 1, modifier: Modifier = Modifier.fillMaxWidth()) { OutlinedTextField(value = value, onValueChange = change, label = { Text(label) }, modifier = modifier, singleLine = lines == 1, minLines = lines, keyboardOptions = KeyboardOptions(keyboardType = if(numeric) KeyboardType.Decimal else KeyboardType.Text)) }
 @Composable fun Choice(values: List<String>, selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { values.forEach { FilterChip(selected = it == selected, onClick = { onSelect(it) }, label = { Text(it) }) } } }
 @Composable fun Confirm(title: String, text: String, dismiss: () -> Unit, accept: () -> Unit) { AlertDialog(onDismissRequest = dismiss, title = { Text(title) }, text = { Text(text) }, confirmButton = { TextButton(onClick = accept) { Text("Подтвердить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } }) }
 @Composable fun clockNow(): Long { var now by remember { mutableLongStateOf(System.currentTimeMillis()) }; LaunchedEffect(Unit) { while(true) { now = System.currentTimeMillis(); delay(1000) } }; return now }
@@ -457,7 +458,111 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         AlertDialog(onDismissRequest = { chosen = null }, title = { Text("${r.title} · с $to") }, text = { LazyColumn(Modifier.heightIn(max = 400.dp)) { if(preview.isEmpty()) item { Text("В прошлой неделе нет занятий для копирования. Создайте план вручную или выберите программу.") }; items(preview) { w -> Text("${w.date} · ${w.name}", fontWeight = FontWeight.Bold); w.items.forEach { i -> Text("${i.name}: ${i.sets.joinToString { "${it.reps} × ${it.weight} кг" }}", style = MaterialTheme.typography.bodySmall) }; Spacer(Modifier.height(10.dp)) } } }, confirmButton = { TextButton(enabled = preview.isNotEmpty(), onClick = { vm.exclusive { vm.repo.saveAll(preview); chosen = null; applied() } }) { Text("Подтвердить план") } }, dismissButton = { TextButton(onClick = { chosen = null }) { Text("Отмена") } })
     }
 }
-@Composable fun RunningScreen(vm: FitViewModel, detail: (String) -> Unit) {
+@Composable fun RouteBuilderScreen(vm: FitViewModel, started: () -> Unit) {
+    val context = LocalContext.current
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val saved by vm.savedRoutes.collectAsStateWithLifecycle()
+    val runs by vm.runs.collectAsStateWithLifecycle()
+    val active = runs.firstOrNull { it.status != "done" && !it.demo }
+    var mode by rememberSaveable(active?.id) { mutableStateOf(active?.navigation?.mode ?: RouteMode.RUN.name) }
+    var startLat by rememberSaveable(active?.id) { mutableStateOf(active?.points?.lastOrNull()?.lat?.toString() ?: "") }; var startLon by rememberSaveable(active?.id) { mutableStateOf(active?.points?.lastOrNull()?.lon?.toString() ?: "") }
+    var finishLat by rememberSaveable(active?.id) { mutableStateOf(active?.navigation?.points?.lastOrNull()?.latitude?.toString() ?: "") }; var finishLon by rememberSaveable(active?.id) { mutableStateOf(active?.navigation?.points?.lastOrNull()?.longitude?.toString() ?: "") }
+    var viaText by rememberSaveable { mutableStateOf("") }
+    var pick by rememberSaveable { mutableStateOf("start") }
+    var loop by rememberSaveable { mutableStateOf(false) }; var targetKm by rememberSaveable { mutableStateOf("5") }
+    var route by remember { mutableStateOf<NavigationRoute?>(null) }; var busy by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }
+    var deviceLocation by remember { mutableStateOf(active?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }) }
+    val scope = rememberCoroutineScope()
+    fun readLastLocation() {
+        try {
+            val manager = context.getSystemService(android.location.LocationManager::class.java)
+            val location = listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)
+                .filter { manager.isProviderEnabled(it) }.mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+                .filter { System.currentTimeMillis() - it.time in 0..(24 * 60 * 60 * 1000L) && it.accuracy <= 200f }.maxByOrNull { it.time }
+            if(location == null) error = "Нет свежей известной позиции. Выйдите на улицу и дождитесь GPS или выберите старт касанием карты."
+            else { deviceLocation = RouteCoordinate(location.latitude, location.longitude); startLat = location.latitude.toString(); startLon = location.longitude.toString(); error = "Старт установлен по последней позиции устройства (${location.accuracy.toInt()} м). Проверьте точность на месте." }
+        } catch(e: SecurityException) { error = "Разрешите геолокацию, чтобы использовать текущую позицию." }
+    }
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if(result[Manifest.permission.ACCESS_FINE_LOCATION] == true) readLastLocation() else error = "Точная геолокация не разрешена. Выберите старт касанием карты или вручную."
+    }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        vm.runPermissionResult()
+        if(result[Manifest.permission.ACCESS_FINE_LOCATION] != true) vm.notify("Для записи маршрута требуется точная геолокация. Маршрут можно просматривать и без неё.")
+    }
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch { runCatching {
+        val xml = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { it.readBytes().also { bytes -> require(bytes.size <= 10_000_000) }.toString(Charsets.UTF_8) } ?: error("Файл недоступен") }
+        val imported = withContext(Dispatchers.Default) { GpxCodec.importRoute(xml) }
+        vm.action { vm.repo.saveRoute(imported); vm.notify("GPX-маршрут добавлен в избранное") }
+    }.onFailure { error = it.message ?: "Не удалось импортировать GPX" } } }
+    val exporter = remember { mutableStateOf<NavigationRoute?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
+        val selected = exporter.value; exporter.value = null
+        if(uri != null && selected != null) scope.launch { runCatching { withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { it.write(GpxCodec.exportRoute(selected)) } ?: error("Файл недоступен") } }.onFailure { error = it.message ?: "Ошибка экспорта" } }
+    }
+    fun setPoint(role: String, point: RouteCoordinate) {
+        when(role) {
+            "start" -> { startLat = point.latitude.toString(); startLon = point.longitude.toString() }
+            "finish" -> { finishLat = point.latitude.toString(); finishLon = point.longitude.toString() }
+            else -> if(viaText.split(';').count { it.isNotBlank() } >= 8) error = "Можно добавить не более 8 промежуточных точек."
+                else viaText = listOf(viaText, "${point.latitude},${point.longitude}").filter { it.isNotBlank() }.joinToString(";")
+        }
+    }
+    fun coordinate(lat: String, lon: String): RouteCoordinate? = lat.toDoubleOrNull()?.let { a -> lon.toDoubleOrNull()?.let { b -> RouteCoordinate(a, b).takeIf { a in -90.0..90.0 && b in -180.0..180.0 } } }
+    val modeValue = RouteMode.valueOf(mode)
+    Page {
+        item { Title(if(active == null) "Планировщик маршрута" else "Перестроение маршрута", "OSM-карта · Valhalla backend · ${modeValue.label}") }
+        item { Choice(RouteMode.entries.map { it.label }, modeValue.label) { selected -> mode = RouteMode.entries.first { it.label == selected }.name } }
+        item { Panel {
+            Text("Нажмите поле, затем коснитесь карты, чтобы выбрать точку. Координаты можно ввести вручную.", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { pick = "start" }, modifier = Modifier.weight(1f)) { Text("Выбрать старт") }; OutlinedButton(onClick = { pick = "finish" }, modifier = Modifier.weight(1f)) { Text("Выбрать финиш") } }
+            OutlinedButton(onClick = { if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) readLastLocation() else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }, modifier = Modifier.fillMaxWidth()) { Text("Использовать последнюю позицию устройства") }
+            Field("Старт · широта", startLat, { startLat = it }, true)
+            Field("Старт · долгота", startLon, { startLon = it }, true)
+            if(!loop) { Field("Финиш · широта", finishLat, { finishLat = it }, true); Field("Финиш · долгота", finishLon, { finishLon = it }, true) }
+            OutlinedButton(onClick = { pick = "via" }, modifier = Modifier.fillMaxWidth()) { Text("Добавить промежуточную точку на карте") }
+            if(viaText.isNotBlank()) Text("Промежуточные точки: $viaText", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(loop, { loop = it }); Text("Круговой маршрут на заданную дистанцию") }
+            if(loop) Field("Дистанция, км (1–50)", targetKm, { targetKm = it }, true)
+        } }
+        item { MapPanel(emptyList(), plannedRoute = route, selectionEnabled = true, markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)), currentLocation = deviceLocation ?: coordinate(startLat, startLon), onMapTap = { setPoint(pick, it) }) }
+        item { Action(if(busy) "Строим по дорожной сети…" else "Построить маршрут", Icons.Default.Route, enabled = !busy) {
+            error = ""; route = null
+            val start = coordinate(startLat, startLon)
+            val finish = coordinate(finishLat, finishLon)
+            val via = viaText.split(';').filter { it.isNotBlank() }.mapNotNull { token -> token.split(',').takeIf { it.size == 2 }?.let { coordinate(it[0].trim(), it[1].trim()) } }
+            if(start == null || (!loop && finish == null) || viaText.split(';').any { it.isNotBlank() } && via.isEmpty()) { error = "Укажите корректные координаты начала, финиша и промежуточных точек." }
+            else {
+                busy = true
+                scope.launch {
+                    try {
+                        val backend = withContext(Dispatchers.IO) { ValhallaRoutingBackend(profile.routingBackendUrl) }
+                        val built = if(loop) backend.loop(start, modeValue, (targetKm.toDoubleOrNull()?.times(1000) ?: 0.0)) else backend.route(RouteRequest(listOf(start) + via + requireNotNull(finish), modeValue, alternates = if(via.isEmpty()) 2 else 0)).firstOrNull() ?: throw RoutingException("Сервис не вернул дорожный маршрут", "no_route")
+                        route = built
+                    } catch(e: Exception) { error = when(e) { is RoutingException -> e.message ?: "Ошибка маршрутизатора"; else -> e.message ?: "Не удалось построить маршрут" } }
+                    finally { busy = false }
+                }
+            }
+        } }
+        if(error.isNotBlank()) item { Text(error, color = MaterialTheme.colorScheme.error) }
+        route?.let { selected ->
+            item { Panel { Text("Маршрут · ${selected.name}", style = MaterialTheme.typography.titleLarge); Metric("Длина", "%.2f км".format(selected.distanceMeters / 1000)); if(selected.instructions.isNotEmpty()) { Text("Сопровождение по маршруту"); selected.instructions.take(12).forEach { Text("${it.text} · через %.0f м".format(it.distanceAlongMeters)) } } } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { vm.action { vm.repo.saveRoute(selected); vm.notify("Маршрут сохранён в избранное") } }, modifier = Modifier.weight(1f)) { Text("В избранное") }; Button(onClick = { if(active != null) { vm.updateNavigationRoute(selected); started() } else { vm.requestRunStart({ permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }, selected); started() } }, modifier = Modifier.weight(1f)) { Text(if(active != null) "Обновить маршрут" else "Начать") } } }
+        }
+        item { Row(verticalAlignment = Alignment.CenterVertically) { Text("Избранные маршруты", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge); TextButton(onClick = { importer.launch(arrayOf("application/gpx+xml", "application/gpx", "text/xml", "application/octet-stream")) }) { Text("Импорт GPX") } } }
+        if(saved.isEmpty()) item { Empty("Сохранённых маршрутов пока нет. Импортируйте GPX или добавьте построенный маршрут.") }
+        items(saved, key = { it.id }) { favorite ->
+            Panel { Text(favorite.name, fontWeight = FontWeight.Bold); Text("${RouteMode.valueOf(favorite.mode).label} · %.2f км · ${favorite.source}".format(favorite.distanceMeters / 1000)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { route = favorite; mode = favorite.mode; startLat = favorite.points.first().latitude.toString(); startLon = favorite.points.first().longitude.toString(); finishLat = favorite.points.last().latitude.toString(); finishLon = favorite.points.last().longitude.toString(); loop = false }, modifier = Modifier.weight(1f)) { Text("Повторить") }
+                OutlinedButton(onClick = { exporter.value = favorite; exportLauncher.launch("${favorite.name}.gpx") }, modifier = Modifier.weight(1f)) { Text("Экспорт GPX") }
+                TextButton(onClick = { vm.action { vm.repo.deleteRoute(favorite.id) } }) { Text("Удалить") }
+            } }
+        }
+        item { Text("При построении выбранные координаты отправляются на указанный Valhalla backend (${profile.routingBackendUrl}); тренировки, история и профиль туда не передаются. При отсутствии сети планирование недоступно, но GPS-секундомер и запись продолжаются независимо. Стандартные OSM тайлы нельзя массово скачивать для офлайн-предзагрузки.", style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+@Composable fun RunningScreen(vm: FitViewModel, detail: (String) -> Unit, routeBuilder: () -> Unit) {
     val runs by vm.runs.collectAsStateWithLifecycle(); val current = runs.firstOrNull { it.status != "done" && !it.demo }; val tick = clockNow(); val context = LocalContext.current
     val stamp = remember(tick) { AndroidClock.read(context) }
     val launch by vm.runLaunch.collectAsStateWithLifecycle()
@@ -465,6 +570,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.runPermissionResult() }
     Page {
         item { Title(if(current?.status == "active") "Пробежка идёт" else "Бег в твоём ритме", "Реальный GPS · запись при заблокированном экране") }
+        item { Action(if(current?.navigation == null) "Построить маршрут" else "Перестроить маршрут", Icons.Default.Map) { routeBuilder() } }
         item { Panel {
             Text(signal, color = MaterialTheme.colorScheme.primary)
             Metric("Дистанция", "%.2f км".format((current?.distance ?: 0.0) / 1000))
@@ -473,7 +579,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             val pace = if(current?.status == "active") Gps.currentPaceAt(current.points, stamp) else null
             Text("Текущий темп: ${formatPace(pace)}"); Text("Текущая скорость: ${pace?.let { "%.1f км/ч".format(60 / it) } ?: "—"}")
         } }
-        if(current != null) item { UserMap(vm, current.points) }
+        if(current != null) item { MapPanel(current.points, plannedRoute = current.navigation, currentLocation = current.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }) }
+        if(current?.navigation != null) item {
+            val navRoute = current!!.navigation!!; val fix = current!!.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }; val progress = fix?.let { RouteMath.progress(navRoute, it) }
+            Panel { Text("Сопровождение · ${RouteMode.valueOf(navRoute.mode).label}", style = MaterialTheme.typography.titleLarge); Text(progress?.let { "Осталось %.2f км".format(it.remainingMeters / 1000) } ?: "Ожидается GPS-позиция маршрута"); if(progress?.offRoute == true) Text("Вы отклонились от маршрута примерно на ${progress.distanceFromRouteMeters.toInt()} м. Нажмите «Перестроить маршрут».", color = MaterialTheme.colorScheme.error) }
+        }
         item {
             if(launch.pending) Text(if(launch.phase == RunLaunchPhase.PERMISSION) "Ожидаем разрешение геолокации…" else "Запускаем запись GPS…")
             if(launch.phase == RunLaunchPhase.ERROR) {
@@ -483,7 +593,8 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             }
         }
         if(current?.status != "active" || launch.phase == RunLaunchPhase.ERROR) item { Action(if(launch.phase == RunLaunchPhase.ERROR) "Повторить запуск" else if(current == null) "Начать пробежку" else "Продолжить пробежку", Icons.Default.PlayArrow, enabled = !launch.pending) {
-            vm.requestRunStart { permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }
+            val ask = { permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }
+            if(launch.phase == RunLaunchPhase.ERROR) vm.retryRunStart(ask) else vm.requestRunStart(requestPermission = ask)
         } }
         if(current?.status == "active") item { Action("Пауза", Icons.Default.Pause) { runCatching { RunService.command(context, RunService.PAUSE) }.onFailure { vm.notify(it.message ?: "Не удалось поставить на паузу") } } }
         if(current != null) item { Action("Завершить и сохранить", Icons.Default.Stop) { finish = true } }
@@ -501,12 +612,20 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 @Composable fun RunDetail(vm: FitViewModel, id: String) {
     val all by vm.runs.collectAsStateWithLifecycle(); val r = all.find { it.id == id }
     if(r == null) { Empty("Загрузка маршрута…"); return }
+    val context = LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri -> if(uri != null) vm.exclusive { withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { it.write(GpxCodec.exportRun(r)) } ?: error("Файл недоступен") }; vm.notify("GPX-трек экспортирован") } }
     val splits = remember(r.points) { Gps.splits(r.points) }; val paces = splits.map { it.minutesPerKm }
     Page {
         item { Title(if(r.demo) "Демо-маршрут" else "Сохранённая пробежка", Instant.ofEpochMilli(r.started).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm", Locale("ru")))) }
         if(r.demo) item { Text("Синтетические координаты. Эта запись исключена из статистики и рекордов.", color = MaterialTheme.colorScheme.primary) }
         item { Panel { Metric("Дистанция", "%.3f км".format(r.distance / 1000)); Metric("Время", formatTime(r.accumulatedMs)); Text("Средний темп: ${formatPace(Gps.pace(r.distance, r.accumulatedMs))}"); Text("Средняя скорость: %.1f км/ч".format(Gps.speed(r.distance, r.accumulatedMs))); Text("GPS-точек: ${r.points.size}"); if(r.recordingMode == "gps") Text("В движении по GPS: ${formatTime(r.movingMs)} (оценка по принятым точкам)") } }
         if(r.recordingMode == "gps") item { UserMap(vm, r.points) } else item { Text("Ручная запись: дистанция и время введены пользователем. GPS-маршрут не записывался.") }
+        if(r.recordingMode == "gps" && !r.demo && r.points.size >= 2) item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { exportLauncher.launch("fitprogress-${r.started}.gpx") }, modifier = Modifier.weight(1f)) { Text("Экспорт GPX") }
+                OutlinedButton(onClick = { val saved = NavigationRoute(name = "GPS · ${Instant.ofEpochMilli(r.started).atZone(ZoneId.systemDefault()).toLocalDate()}", mode = r.navigation?.mode ?: RouteMode.RUN.name, points = r.points.map { RouteCoordinate(it.lat, it.lon, it.segment) }, distanceMeters = r.distance.coerceAtLeast(1.0), source = "GPS"); vm.action { vm.repo.saveRoute(saved); vm.notify("GPS-трек добавлен в избранные маршруты") } }, modifier = Modifier.weight(1f)) { Text("В избранные") }
+            }
+        }
         item { Panel { LineChart(paces, "Темп, мин/км · каждые 100 м дистанции"); Text("По горизонтали — отрезки по 100 м, по вертикали — темп. Паузы исключены; до первых 100 м график пуст.", style = MaterialTheme.typography.bodySmall) } }
     }
 }
@@ -549,7 +668,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 }
 @Composable fun SettingsScreen(vm: FitViewModel) {
     val p by vm.profile.collectAsStateWithLifecycle(); val context = LocalContext.current
-    var name by rememberSaveable(p.name) { mutableStateOf(p.name) }; var level by rememberSaveable(p.level) { mutableStateOf(p.level) }; var goals by rememberSaveable(p.goals) { mutableStateOf(p.goals) }; var activities by rememberSaveable(p.activities) { mutableStateOf(p.activities) }; var rest by rememberSaveable(p.rest) { mutableStateOf(p.rest.toString()) }
+    var name by rememberSaveable(p.name) { mutableStateOf(p.name) }; var level by rememberSaveable(p.level) { mutableStateOf(p.level) }; var goals by rememberSaveable(p.goals) { mutableStateOf(p.goals) }; var activities by rememberSaveable(p.activities) { mutableStateOf(p.activities) }; var rest by rememberSaveable(p.rest) { mutableStateOf(p.rest.toString()) }; var routingUrl by rememberSaveable(p.routingBackendUrl) { mutableStateOf(p.routingBackendUrl) }
     var delete by remember { mutableStateOf(false) }; var importData by remember { mutableStateOf<Backup?>(null) }; var importCount by remember { mutableStateOf(0) }
     val jsonExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri != null) vm.exclusive {
         val snapshot = vm.repo.snapshot(); val text = withContext(Dispatchers.Default) { BackupCodec.checkedExport(snapshot) }; withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(text) } ?: error("Файл недоступен для записи") }; vm.notify("JSON сохранён")
@@ -565,9 +684,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     Page {
         item { Title("Профиль и настройки", "Без регистрации · данные на вашем устройстве") }
         item { Field("Имя", name, { name = it }) }
+        item { Field("Valhalla routing backend URL", routingUrl, { routingUrl = it }) }
+        item { Text("По умолчанию используется общедоступный backend сообщества, работающий без SLA. Можно указать собственный Valhalla HTTPS endpoint. Для локальной сети допускается HTTP.", style = MaterialTheme.typography.bodySmall) }
         item { Choice(listOf("Новичок", "Любитель", "Продвинутый"), level) { level = it } }
         item { Field("Спортивные цели", goals, { goals = it }, lines = 2) }; item { Field("Предпочтительные активности", activities, { activities = it }) }; item { Field("Отдых по умолчанию, сек", rest, { rest = it }, true) }
-        item { Action("Сохранить профиль", Icons.Default.Save) { val r = rest.toIntOrNull(); if(name.isNotBlank() && name.length <= 80 && r != null && r in 0..3600) vm.action { vm.repo.updateProfile { it.copy(name = name.trim(), level = level, goals = goals, activities = activities, rest = r) }; vm.notify("Профиль сохранён") } else vm.notify("Проверьте имя и отдых (0–3600 секунд)") } }
+        item { Action("Сохранить профиль", Icons.Default.Save) { val r = rest.toIntOrNull(); if(name.isNotBlank() && name.length <= 80 && r != null && r in 0..3600 && routingUrl.length <= 300 && runCatching { ValhallaRoutingBackend(routingUrl) }.isSuccess) vm.action { vm.repo.updateProfile { it.copy(name = name.trim(), level = level, goals = goals, activities = activities, rest = r, routingBackendUrl = routingUrl.trim()) }; vm.notify("Профиль сохранён") } else vm.notify("Проверьте имя, отдых и HTTPS URL Valhalla (или HTTP в локальной сети)") } }
         item { Panel {
             Row(verticalAlignment = Alignment.CenterVertically) { Text("Светлая тема", Modifier.weight(1f)); Switch(p.light, { light -> vm.action { vm.repo.updateProfile { it.copy(light = light) } } }) }
             Row(verticalAlignment = Alignment.CenterVertically) { Text("Недельные уведомления", Modifier.weight(1f)); Switch(p.notifications, { enabled -> if(enabled && Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.action { vm.repo.updateProfile { it.copy(notifications = enabled) } } }) }

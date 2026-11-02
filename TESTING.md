@@ -1,19 +1,31 @@
 # Проверки FitProgressAI 3.0-dev
 
-## Каталог и импорт программ — 2026-11-02
+## GPS маршрутизация — новый прогон 2026-11-02
+
+- `./gradlew --no-parallel testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest`: **BUILD SUCCESSFUL**, 140 tests, 0 failures/errors; Lint 0 errors, 38 warnings + 1 informational; `assembleDebug` и `assembleDebugAndroidTest` успешны. Обычный parallel запуск однажды наткнулся на временный KAPT stub race в lint; последовательный повтор прошёл.
+- `./tools/run-domain-tests.sh`: **140 tests passed**.
+- APK: `app/build/outputs/apk/debug/app-debug.apk`, 111,767,106 bytes, SHA-256 `876adf2a3a116b0b598543c7e19e91eef5bbc7d78213597db466522e6b976f66`; applicationId `ru.fitprogress.ai`, versionCode 6/versionName 3.0-dev. `apksigner verify` PASS, signing cert SHA-256 `2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef` matches prior recorded debug artifact. `aapt dump badging` PASS; 16 KB `zipalign -c -P 16 -v 4` PASS.
+- Android test APK compiles; 25 instrumentation tests including the new Room favorite-route preservation test. **They were not run on a device.** ADB reports `could not install *smartsocket* listener: Operation not permitted`; installation, actual data upgrade, MapLibre taps, live routing service and lock-screen GPS were not testable here.
+- JVM routing tests use recorded coordinates and a fake Valhalla transport. They prove request serialization, parser, GPX/XXE and route geometry behavior; they do not prove a live server response or cartographic quality.
+
+### Условия сторонних серверов
+
+`tile.openstreetmap.org` requires visible OpenStreetMap attribution, a unique application User-Agent, caching according to server headers, and prohibits tile bulk download/offline prefetch. The FOSSGIS-hosted Valhalla demo is documented as fair-use/rate-limited without SLA; Valhalla asks public applications to notify maintainers through GitHub Discussions and send identifying `X-Client-Id`. Current app adds that header and rate-spaces user-initiated requests; before public rollout, notify maintainers or use a managed/self-hosted endpoint. References: [OSMF tile policy](https://operations.osmfoundation.org/policies/tiles/), [Valhalla user introduction](https://valhalla.github.io/valhalla/start/introduction/), [Valhalla route API](https://valhalla.github.io/valhalla/api/route/api-reference/).
+
+## Каталог и импорт программ — 2026-11-02 (предыдущий прогон)
 
 - `python3 tools/validate_exercise_asset.py`: 876 уникальных ID, 871 пригодная запись, 0 точных нормализованных дублей исходного названия; 77 записей без equipment помечаются как неизвестные, 5 неполных исключены.
-- `./gradlew testDebugUnitTest lintDebug assembleDebug`: **BUILD SUCCESSFUL**, 134 unit tests, 0 failures; Lint 0 errors / 36 warnings; debug APK собран.
-- APK `app/build/outputs/apk/debug/app-debug.apk`: 111,542,390 байт, SHA-256 `6d8b5d96b7b48308466ca502c4171b3ff0656fbbcef6886f37b974c7d8cbf312`; package `ru.fitprogress.ai` v6/3.0-dev. `apksigner verify`, DEX/Room identity inspection и `zipalign -P 16 -c 4` прошли.
+- Тогда: 134 unit tests, 0 failures; Lint 0 errors / 36 warnings; debug APK собран. Текущие результаты маршрутизационного прогона выше.
+- Тогда APK SHA-256 был `6d8b5d96b7b48308466ca502c4171b3ff0656fbbcef6886f37b974c7d8cbf312`; текущий APK и сертификат указаны выше.
 - `ProgramInterchangeTest`: JSON schema v1 и расписание; неизвестная версия/недопустимые параметры; CSV quotes/grouping; malformed CSV и дубли дней. `ExerciseSearchTest`: категория/equipment, RU+EN, частичный поиск, тип и происхождение записи.
 - CSV принимает обязательные колонки `week,weekday,session,exercise,sets,reps`; опциональные `weight_kg,seconds,rest_seconds`. JSON описан в README. До сохранения неизвестные упражнения нужно сопоставить вручную.
 - Этот прогон не заменяет Compose UI и Android instrumentation. Проверки SAF импорта на устройстве, маленького экрана/клавиатуры и Room upgrade на телефоне пока не проведены.
 
-- `./tools/run-domain-tests.sh`: **134 теста реально пройдены**; результат совпал со стандартным Gradle.
+- `./tools/run-domain-tests.sh`: **140 тестов реально пройдены**; результат совпал со стандартным Gradle.
 - `python3 tools/validate_exercise_asset.py`: **PASS**, 876 уникальных записей с pin/licence, 871 имеют required core fields, пять исключаются.
 - `python3 tools/offline-android-build.py --android-tests --package`: Kotlin/Compose compilation и Room Processor/javac PASS; Android test compilation PASS. 24 Android tests compiled, **not executed**. D8/AAPT2/zipalign/apksigner build PASS.
-- Первый запуск Gradle в этой сессии был заблокирован wrapper lock; повторный стандартный Gradle запуск успешно завершил assemble, unit tests и lint после исправления трёх Lint errors. `./gradlew assembleDebugAndroidTest` также успешно собрал instrumentation APK/24 тестовых кейса; это компиляция, не исполнение.
-- ADB devices listing показывает подключённое устройство, но любая shell-задача блокируется невозможностью создать `tcp:5037` listener. Не установлено, не нажимали экран, не забирали logcat.
+- Стандартный Gradle запуск успешно завершил assemble, unit tests и lint. `./gradlew assembleDebugAndroidTest` собрал instrumentation APK/25 тестовых кейсов; это компиляция, не исполнение.
+- ADB server не смог открыть `tcp:5037` listener (`Operation not permitted`). Не установлено, не нажимали экран, не забирали logcat.
 
 Каталог тесты: русское/английское частичное имя, мышцы, yo folding, combined filters; Android source test проверяет asset, уникальность, маркеры, импорт и реальный search. Последний test скомпилирован, device not run. Статический `verify-apk`/fingerprint не является UI/runtime test.
 
@@ -107,6 +119,29 @@ python3 tools/package-android-tests.py
 Предыдущая матрица 2.1-dev (историческая):
 
 # Проверки FitProgressAI 2.1-dev
+
+## GPS маршрутизация — новый прогон 2026-11-02
+
+Добавлены `NavigationTest`: фактическая haversine distance/projection и off-route threshold, route validation, GPX export/import roundtrip, отклонение некорректных координат и XXE, Valhalla costing/body/instructions parse и типизированный offline failure, Backup v4 saved route. Unit-тесты используют фиксированные точки/фиктивный Valhalla transport, но не рисуют/не сохраняют синтетические значения в пользовательские записи.
+
+Целевой повторяемый прогон:
+
+```bash
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+./tools/run-domain-tests.sh
+```
+
+Тесты JVM и Android instrumentation не доказывают доступность внешнего Valhalla, правильное поведение MapLibre на конкретном телефоне, GNSS качество, lock screen/Doze, SAF или Room upgrade установленной версии. Здесь ADB server не поднимается (`could not install *smartsocket* listener: Operation not permitted`), поэтому телефонные сценарии непроверены. См. итоговые логи/цифры ниже после сборки.
+
+### Ручная проверка маршрутизатора и карты
+
+1. Убедитесь, что карта видит attribution `© OpenStreetMap contributors`; не запускайте tile prefetch и не обещайте офлайн карту со стандартным OSM tile endpoint.
+2. Сеть включена: выбрать «Моё местоположение», finish касанием/координатой и режим. Проверить реальную форму дороги, а не прямой сегмент, длину, русские подсказки; выбрать точку через waypoint и круг 1–50 км.
+3. Сохранить маршрут, закрыть приложение, снова открыть, повторить сохранённый маршрут, экспортировать GPX; импортировать его через системный документ picker. Для GPS Run Detail проверить export реального трека. Демонстрационные точки не экспортировать.
+4. Запустить запись, свернуть/заблокировать телефон, выключить сеть: FGS секундомер и GPS путь продолжаются; маршрутный backend не нужен. Отклониться на открытом месте: увидеть предупреждение, нажать ручное перестроение. Закончить пробежку, проверить трек и данные после перезапуска.
+5. Проверить backend 429/5xx/timeout/no-route и геолокацию denied/provider off: причина должна быть видна, а запись и сохранённая геометрия не должны исчезать.
+
+FOSSGIS Valhalla public demo просит пользователей мобильных/публичных приложений сообщить о проекте через GitHub Discussions, добавить `X-Client-Id`, использовать умеренно и учитывать fair-use/rate limit; endpoint не имеет SLA. Перед распространением app нужна такая договорённость либо собственный Valhalla сервер. Стандартный OSM tile policy требует видимый attribution, стабильный app User-Agent, кэширование по заголовкам и запрещает bulk/offline-prefetch. Ссылки приведены в README.
 
 ## Фактическая матрица
 

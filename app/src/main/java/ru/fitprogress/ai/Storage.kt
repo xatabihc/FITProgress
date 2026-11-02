@@ -19,7 +19,7 @@ private val Context.productionSettings by preferencesDataStore("profile")
 private val Context.testSettings by preferencesDataStore("profile-instrumentation")
 val Context.settingsStore: androidx.datastore.core.DataStore<Preferences>
     get() = if((applicationContext as? FitApp)?.isolatedTestStorage == true) testSettings else productionSettings
-data class Profile(val name: String = "Спортсмен", val level: String = "Новичок", val goals: String = "Здоровье и регулярность", val activities: String = "Силовые, бег", val light: Boolean = false, val notifications: Boolean = false, val rest: Int = 60, val timerSound: Boolean = true, val timerVibration: Boolean = true, val accent: String = "lime", val mapEnabled: Boolean = true, val reminders: Boolean = false, val reminderHour: Int = 18, val runSignals: Boolean = false)
+data class Profile(val name: String = "Спортсмен", val level: String = "Новичок", val goals: String = "Здоровье и регулярность", val activities: String = "Силовые, бег", val light: Boolean = false, val notifications: Boolean = false, val rest: Int = 60, val timerSound: Boolean = true, val timerVibration: Boolean = true, val accent: String = "lime", val mapEnabled: Boolean = true, val reminders: Boolean = false, val reminderHour: Int = 18, val runSignals: Boolean = false, val routingBackendUrl: String = "https://valhalla1.openstreetmap.de")
 class Repository(private val db: FitDatabase, private val context: Context) {
     private val dao = db.dao(); private val gson = BackupCodec.gson; private val mutex = Mutex()
     private suspend fun <T> storage(block: suspend () -> T): T = withContext(Dispatchers.IO) { mutex.withLock { block() } }
@@ -27,6 +27,9 @@ class Repository(private val db: FitDatabase, private val context: Context) {
     val personalData = personal.map { rows -> PersonalState(true, rows.filter { it.kind == "goal" }.map { gson.fromJson(it.payload, SportGoal::class.java) }, rows.filter { it.kind == "wellbeing" }.map { gson.fromJson(it.payload, Wellbeing::class.java) }.sortedByDescending { it.date }) }.flowOn(Dispatchers.Default)
     val goals = personal.map { rows -> rows.filter { it.kind == "goal" }.map { gson.fromJson(it.payload, SportGoal::class.java) } }.flowOn(Dispatchers.Default)
     val wellbeing = personal.map { rows -> rows.filter { it.kind == "wellbeing" }.map { gson.fromJson(it.payload, Wellbeing::class.java) }.sortedByDescending { it.date } }.flowOn(Dispatchers.Default)
+    val savedRoutes = personal.map { rows -> rows.filter { it.kind == "route" }.mapNotNull { row -> runCatching { gson.fromJson(row.payload, NavigationRoute::class.java).also(RouteMath::validate) }.getOrNull() }.sortedByDescending { it.createdAt } }.flowOn(Dispatchers.Default)
+    suspend fun saveRoute(route: NavigationRoute) = storage { RouteMath.validate(route); dao.putPersonal(PersonalRow("route:${route.id}", "route", gson.toJson(route))) }
+    suspend fun deleteRoute(id: String) = storage { dao.deletePersonal("route:$id") }
     suspend fun saveGoal(g: SportGoal) = storage { PersonalValidation.goal(g); dao.putPersonal(PersonalRow("goal:${g.id}", "goal", gson.toJson(g))) }
     suspend fun saveWellbeing(w: Wellbeing) = storage { PersonalValidation.wellbeing(w); require(LocalDate.parse(w.date) <= LocalDate.now()) { "Нельзя оценить самочувствие будущего дня" }; dao.putPersonal(PersonalRow("wellbeing:${w.date}", "wellbeing", gson.toJson(w))) }
     suspend fun deleteWellbeing(date: String) = storage { dao.deletePersonal("wellbeing:$date") }
@@ -37,14 +40,14 @@ class Repository(private val db: FitDatabase, private val context: Context) {
     }.flowOn(Dispatchers.Default)
     val workouts = dao.workouts().map { rows -> rows.map { gson.fromJson(it.payload, Workout::class.java) }.sortedBy { it.date } }.flowOn(Dispatchers.Default)
     val runs = dao.runs().map { rows -> rows.map { gson.fromJson(it.payload, Run::class.java) }.sortedByDescending { it.started } }.flowOn(Dispatchers.Default)
-    private fun readProfile(p: Preferences) = Profile(p[stringPreferencesKey("name")] ?: "Спортсмен", p[stringPreferencesKey("level")] ?: "Новичок", p[stringPreferencesKey("goals")] ?: "Здоровье и регулярность", p[stringPreferencesKey("activities")] ?: "Силовые, бег", p[booleanPreferencesKey("light")] ?: false, p[booleanPreferencesKey("notifications")] ?: false, p[intPreferencesKey("rest")] ?: 60, p[booleanPreferencesKey("timerSound")] ?: true, p[booleanPreferencesKey("timerVibration")] ?: true, p[stringPreferencesKey("accent")] ?: "lime", p[booleanPreferencesKey("mapEnabled")] ?: true, p[booleanPreferencesKey("reminders")] ?: false, p[intPreferencesKey("reminderHour")] ?: 18, p[booleanPreferencesKey("runSignals")] ?: false)
+    private fun readProfile(p: Preferences) = Profile(p[stringPreferencesKey("name")] ?: "Спортсмен", p[stringPreferencesKey("level")] ?: "Новичок", p[stringPreferencesKey("goals")] ?: "Здоровье и регулярность", p[stringPreferencesKey("activities")] ?: "Силовые, бег", p[booleanPreferencesKey("light")] ?: false, p[booleanPreferencesKey("notifications")] ?: false, p[intPreferencesKey("rest")] ?: 60, p[booleanPreferencesKey("timerSound")] ?: true, p[booleanPreferencesKey("timerVibration")] ?: true, p[stringPreferencesKey("accent")] ?: "lime", p[booleanPreferencesKey("mapEnabled")] ?: true, p[booleanPreferencesKey("reminders")] ?: false, p[intPreferencesKey("reminderHour")] ?: 18, p[booleanPreferencesKey("runSignals")] ?: false, p[stringPreferencesKey("routingBackendUrl")] ?: "https://valhalla1.openstreetmap.de")
     val profile = context.settingsStore.data.map(::readProfile)
     suspend fun updateProfile(change: (Profile) -> Profile) { context.settingsStore.edit { data ->
-        val p = change(readProfile(data)); require(p.name.isNotBlank() && p.name.length <= 80 && p.rest in 0..3600 && p.accent in listOf("lime", "cyan", "orange") && p.reminderHour in 0..23)
+        val p = change(readProfile(data)); require(p.name.isNotBlank() && p.name.length <= 80 && p.rest in 0..3600 && p.accent in listOf("lime", "cyan", "orange") && p.reminderHour in 0..23 && p.routingBackendUrl.length <= 300 && runCatching { ValhallaRoutingBackend(p.routingBackendUrl) }.isSuccess) { "Укажите HTTPS backend или HTTP адрес локальной сети" }
         data[stringPreferencesKey("name")] = p.name; data[stringPreferencesKey("level")] = p.level; data[stringPreferencesKey("goals")] = p.goals; data[stringPreferencesKey("activities")] = p.activities
         data[booleanPreferencesKey("light")] = p.light; data[booleanPreferencesKey("notifications")] = p.notifications; data[intPreferencesKey("rest")] = p.rest
         data[booleanPreferencesKey("timerSound")] = p.timerSound; data[booleanPreferencesKey("timerVibration")] = p.timerVibration; data[stringPreferencesKey("accent")] = p.accent; data[booleanPreferencesKey("mapEnabled")] = p.mapEnabled
-        data[booleanPreferencesKey("reminders")] = p.reminders; data[intPreferencesKey("reminderHour")] = p.reminderHour; data[booleanPreferencesKey("runSignals")] = p.runSignals
+        data[booleanPreferencesKey("reminders")] = p.reminders; data[intPreferencesKey("reminderHour")] = p.reminderHour; data[booleanPreferencesKey("runSignals")] = p.runSignals; data[stringPreferencesKey("routingBackendUrl")] = p.routingBackendUrl
     } }
     suspend fun saveProfile(p: Profile) = updateProfile { p }
     suspend fun save(e: Exercise) = storage { BackupCodec.validateExercise(e); require(!e.builtIn); dao.putExercise(ExerciseRow(e.id, gson.toJson(e))) }
@@ -70,7 +73,7 @@ class Repository(private val db: FitDatabase, private val context: Context) {
     private suspend fun snapshotUnlocked(): Backup {
         val records = dao.allPersonal()
         return Backup(exercises = dao.allExercises().map { gson.fromJson(it.payload, Exercise::class.java) }, workouts = dao.allWorkouts().map { gson.fromJson(it.payload, Workout::class.java) }, runs = dao.allRuns().map { gson.fromJson(it.payload, Run::class.java) },
-            goals = records.filter { it.kind == "goal" }.map { gson.fromJson(it.payload, SportGoal::class.java) }, wellbeing = records.filter { it.kind == "wellbeing" }.map { gson.fromJson(it.payload, Wellbeing::class.java) }, coachReceipts = records.filter { it.kind == "coach" }.map { gson.fromJson(it.payload, CoachReceipt::class.java) })
+            goals = records.filter { it.kind == "goal" }.map { gson.fromJson(it.payload, SportGoal::class.java) }, wellbeing = records.filter { it.kind == "wellbeing" }.map { gson.fromJson(it.payload, Wellbeing::class.java) }, coachReceipts = records.filter { it.kind == "coach" }.map { gson.fromJson(it.payload, CoachReceipt::class.java) }, savedRoutes = records.filter { it.kind == "route" }.map { gson.fromJson(it.payload, NavigationRoute::class.java) })
     }
     suspend fun snapshot(): Backup = storage { db.withTransaction { snapshotUnlocked() } }
     suspend fun applyCoach(preview: CoachPreview, expected: Backup) = storage {
@@ -99,6 +102,7 @@ class Repository(private val db: FitDatabase, private val context: Context) {
             b.goals.forEach { if(dao.personalById("goal:${it.id}") == null) dao.putPersonal(PersonalRow("goal:${it.id}", "goal", gson.toJson(it))) }
             b.wellbeing.forEach { if(dao.personalById("wellbeing:${it.date}") == null) dao.putPersonal(PersonalRow("wellbeing:${it.date}", "wellbeing", gson.toJson(it))) }
             b.coachReceipts.forEach { if(dao.personalById("coach:${it.week}") == null) dao.putPersonal(PersonalRow("coach:${it.week}", "coach", gson.toJson(it))) }
+            b.savedRoutes.forEach { if(dao.personalById("route:${it.id}") == null) { RouteMath.validate(it); dao.putPersonal(PersonalRow("route:${it.id}", "route", gson.toJson(it))) } }
             b.exercises.filter { it.id !in existingE }.forEach { dao.putExercise(ExerciseRow(it.id, gson.toJson(it))) }
             b.workouts.filter { it.id !in existingW }.forEach { val w = SessionTimers.forImport(it); dao.putWorkout(WorkoutRow(w.id, gson.toJson(w))) }
             b.runs.filter { it.id !in existingR }.forEach { val r = if(it.status != "done") it.copy(status = "paused", activeSince = 0, timing = null, segment = it.segment + 1) else it; dao.putRun(RunRow(r.id, gson.toJson(r))) }

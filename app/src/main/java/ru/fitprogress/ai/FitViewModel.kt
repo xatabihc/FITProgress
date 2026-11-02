@@ -24,7 +24,13 @@ class FitViewModel @JvmOverloads constructor(app: Application, val repo: Reposit
     val wellbeing = personalData.map { it.wellbeing }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val profile = repo.profile.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, Profile())
     val runLaunch = RunService.launch.state
-    fun requestRunStart(requestPermission: () -> Unit) {
+    private var requestedRunRoute: NavigationRoute? = null
+    fun requestRunStart(requestPermission: () -> Unit, route: NavigationRoute? = null) {
+        requestedRunRoute = route
+        beginRunStart(requestPermission)
+    }
+    fun retryRunStart(requestPermission: () -> Unit) = beginRunStart(requestPermission)
+    private fun beginRunStart(requestPermission: () -> Unit) {
         val context = getApplication<Application>()
         val fine = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
         android.util.Log.i("FitRunStart", "UI start pressed; fine=$fine phase=${runLaunch.value.phase}")
@@ -40,7 +46,7 @@ class FitViewModel @JvmOverloads constructor(app: Application, val repo: Reposit
         val context = getApplication<Application>()
         try {
             val enabled = context.getSystemService(android.location.LocationManager::class.java).isLocationEnabled
-            if(RunService.launch.dispatch(enabled) { RunService.command(context, RunService.START) }) {
+            if(RunService.launch.dispatch(enabled) { RunService.command(context, RunService.START, requestedRunRoute) }) {
                 val attempt = runLaunch.value.attempt
                 viewModelScope.launch { delay(15000); RunService.launch.timeout(attempt) }
             }
@@ -59,6 +65,8 @@ class FitViewModel @JvmOverloads constructor(app: Application, val repo: Reposit
         }
     }
     fun notify(text: String) { messages.tryEmit(text) }
+    val savedRoutes = repo.savedRoutes.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    fun updateNavigationRoute(route: NavigationRoute) = action { RouteMath.validate(route); RunService.command(getApplication(), RunService.UPDATE_ROUTE, route) }
     fun create(onCreated: (String) -> Unit) = exclusive { val w = Workout(); repo.save(w); onCreated(w.id) }
     fun update(id: String, block: (Workout) -> Workout) = action { repo.updateWorkout(id, block) }
     fun addExercise(workout: Workout, exercise: Exercise) = update(workout.id) { require(it.items.size < 300) { "Не более 300 упражнений" }; it.copy(items = it.items + Training.item(exercise).copy(rest = if(exercise.rest == 60) profile.value.rest else exercise.rest)) }
