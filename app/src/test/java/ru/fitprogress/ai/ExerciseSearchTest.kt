@@ -5,7 +5,7 @@ import org.junit.Test
 
 class ExerciseSearchTest {
     private val library = listOf(
-        Exercise(id = "x1", name = "Жим гантелей лёжа", category = "Грудь", muscles = "грудные мышцы, трицепс", equipment = "гантели", technique = "dumbbell bench press"),
+        Exercise(id = "x1", name = "Жим гантелей лёжа", category = "Грудь", muscles = "грудные мышцы, трицепс", equipment = "гантели", technique = "dumbbell bench press", builtIn = true),
         Exercise(id = "x2", name = "Приседание со штангой", category = "Квадрицепсы", muscles = "quadriceps, glutes", equipment = "штанга", technique = "barbell squat"),
         Exercise(id = "x3", name = "Растяжка 90/90", category = "Растяжка", muscles = "hamstrings", equipment = "без оборудования", technique = "hamstring stretch")
     )
@@ -30,5 +30,10 @@ class ExerciseSearchTest {
     @Test fun partialMultiwordQueryRequiresAllWords() {
         assertTrue(index.filter("жим икры").isEmpty())
         assertEquals(3, index.size)
+    }
+    @Test fun filtersByMovementTypeAndBuiltInOrUserOrigin() {
+        assertEquals("x1", index.filter(type = "strength", origin = "Встроенные").single().id)
+        assertTrue(index.filter(type = "cardio").isEmpty())
+        assertEquals(2, index.filter(origin = "Мои").size)
     }
 }

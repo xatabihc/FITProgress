@@ -147,6 +147,9 @@ class RunService : Service() {
         return START_NOT_STICKY // A killed service is recovered as paused, never as silently recording.
     }
     private fun subscribeLocations() {
+        if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Точное разрешение геолокации отозвано перед подпиской")
+        }
         val gms = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) == ConnectionResult.SUCCESS
         Log.i("FitRunStart", "Location backend=${if(gms) "fused" else "android-gps"}")
         if(gms) {

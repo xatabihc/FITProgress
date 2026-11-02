@@ -1,9 +1,18 @@
 # Проверки FitProgressAI 3.0-dev
 
-- `./tools/run-domain-tests.sh`: **128 тестов реально пройдены** (лог ниже/`docs/verification/v3.0/junit.txt`).
+## Каталог и импорт программ — 2026-11-02
+
+- `python3 tools/validate_exercise_asset.py`: 876 уникальных ID, 871 пригодная запись, 0 точных нормализованных дублей исходного названия; 77 записей без equipment помечаются как неизвестные, 5 неполных исключены.
+- `./gradlew testDebugUnitTest lintDebug assembleDebug`: **BUILD SUCCESSFUL**, 134 unit tests, 0 failures; Lint 0 errors / 36 warnings; debug APK собран.
+- APK `app/build/outputs/apk/debug/app-debug.apk`: 111,542,390 байт, SHA-256 `6d8b5d96b7b48308466ca502c4171b3ff0656fbbcef6886f37b974c7d8cbf312`; package `ru.fitprogress.ai` v6/3.0-dev. `apksigner verify`, DEX/Room identity inspection и `zipalign -P 16 -c 4` прошли.
+- `ProgramInterchangeTest`: JSON schema v1 и расписание; неизвестная версия/недопустимые параметры; CSV quotes/grouping; malformed CSV и дубли дней. `ExerciseSearchTest`: категория/equipment, RU+EN, частичный поиск, тип и происхождение записи.
+- CSV принимает обязательные колонки `week,weekday,session,exercise,sets,reps`; опциональные `weight_kg,seconds,rest_seconds`. JSON описан в README. До сохранения неизвестные упражнения нужно сопоставить вручную.
+- Этот прогон не заменяет Compose UI и Android instrumentation. Проверки SAF импорта на устройстве, маленького экрана/клавиатуры и Room upgrade на телефоне пока не проведены.
+
+- `./tools/run-domain-tests.sh`: **134 теста реально пройдены**; результат совпал со стандартным Gradle.
 - `python3 tools/validate_exercise_asset.py`: **PASS**, 876 уникальных записей с pin/licence, 871 имеют required core fields, пять исключаются.
 - `python3 tools/offline-android-build.py --android-tests --package`: Kotlin/Compose compilation и Room Processor/javac PASS; Android test compilation PASS. 24 Android tests compiled, **not executed**. D8/AAPT2/zipalign/apksigner build PASS.
-- `./gradlew assembleDebug testDebugUnitTest lintDebug`: остановился на read-only `gradle-8.11.1-bin.zip.lck` до задач. Не считать Gradle build/test/Lint успешными.
+- Первый запуск Gradle в этой сессии был заблокирован wrapper lock; повторный стандартный Gradle запуск успешно завершил assemble, unit tests и lint после исправления трёх Lint errors. `./gradlew assembleDebugAndroidTest` также успешно собрал instrumentation APK/24 тестовых кейса; это компиляция, не исполнение.
 - ADB devices listing показывает подключённое устройство, но любая shell-задача блокируется невозможностью создать `tcp:5037` listener. Не установлено, не нажимали экран, не забирали logcat.
 
 Каталог тесты: русское/английское частичное имя, мышцы, yo folding, combined filters; Android source test проверяет asset, уникальность, маркеры, импорт и реальный search. Последний test скомпилирован, device not run. Статический `verify-apk`/fingerprint не является UI/runtime test.

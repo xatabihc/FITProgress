@@ -11,6 +11,23 @@ object OpenExerciseLibrary {
     const val SOURCE = "yuhonas/free-exercise-db"
     const val REVISION = "f00c92c7dcf1216a928a52c3706c7ce8e2f71ed5"
     const val LICENSE = "Unlicense"
+    private data class RussianGuide(val technique: String, val errors: String, val alternatives: String)
+    private val russianGuides = mapOf(
+        "Pushups" to RussianGuide("Примите упор лёжа: ладони примерно под плечами, тело удерживайте прямой линией. Согните руки, опуская грудь под контролем; оттолкнитесь и выпрямите руки без резкого запирания локтей.", "Не прогибайте поясницу, не поднимайте таз и не разводите локти строго в стороны.", "Отжимания от высокой опоры или с колен; усложнение — узкая постановка рук."),
+        "Pullups" to RussianGuide("Возьмитесь за перекладину устойчивым хватом. Начните движение сведением лопаток, подтяните грудь к перекладине без раскачивания и плавно опуститесь до комфортного разгибания рук.", "Не раскачивайтесь, не вытягивайте подбородок вместо подъёма и не падайте в нижнюю точку.", "Тяга верхнего блока или подтягивания с резиновой поддержкой."),
+        "Barbell_Bench_Press_-_Medium_Grip" to RussianGuide("Лягте так, чтобы гриф находился над глазами; стопы устойчиво стоят на полу. Сведите лопатки, снимите гриф, опустите его к нижней части груди с предплечьями примерно вертикально и выжмите вверх.", "Не отбивайте гриф от груди, не теряйте опору стоп и не допускайте неконтролируемого разведения локтей.", "Жим гантелей лёжа или отжимания. Для тяжёлых подходов используйте страховочные упоры или партнёра."),
+        "Dumbbell_Bench_Press" to RussianGuide("Лягте на скамью, удерживая гантели над грудью. Опускайте их по сторонам груди в контролируемой амплитуде, сохраняя запястья над локтями; выжмите вверх без столкновения гантелей.", "Не переразгибайте поясницу, не опускайте плечо в болезненную глубину и не сводите гантели ударом.", "Жим штанги или отжимания от пола."),
+        "Barbell_Full_Squat" to RussianGuide("Поставьте стопы устойчиво, направив носки по естественному углу. Отведите таз и согните колени, удерживая всю стопу на полу и корпус собранным; встаньте, одновременно разгибая таз и колени.", "Не теряйте равновесие на носках, не округляйте поясницу и не форсируйте глубину, которую не контролируете.", "Приседание к коробке, приседание с собственным весом или жим ногами."),
+        "Barbell_Deadlift" to RussianGuide("Подойдите к грифу так, чтобы он был над серединой стопы. Зафиксируйте корпус, возьмитесь за гриф и поднимайте его близко к ногам, разгибая колени и таз согласованно; опускайте по той же траектории.", "Не округляйте спину под нагрузкой, не отводите гриф от ног и не дёргайте его с пола.", "Тяга гири с возвышения или румынская тяга с лёгким весом."),
+        "Bent_Over_Barbell_Row" to RussianGuide("Удерживая корпус наклонённым и спину нейтральной, подтяните гриф к нижней части живота. Кратко сведите лопатки и опустите гриф под контролем.", "Не поднимайте корпус на каждом повторе и не округляйте поясницу.", "Тяга гантели с опорой или тяга горизонтального блока."),
+        "Plank" to RussianGuide("Опирайтесь на предплечья и носки, локти расположите под плечами. Напрягите живот и ягодицы, сохраняя прямую линию от головы до пяток; дышите ровно и завершите подход до потери положения.", "Не провисайте в пояснице, не поднимайте таз слишком высоко и не задерживайте дыхание.", "Планка с колен или короткие удержания у стены."),
+        "Barbell_Curl" to RussianGuide("Встаньте устойчиво, держите гриф на вытянутых руках. Согните локти, поднимая гриф без движения плеч; плавно опустите до исходного положения.", "Не раскачивайте корпус, не уводите локти вперёд и не разгибайте локоть рывком.", "Сгибание рук с гантелями или на нижнем блоке."),
+        "Standing_Military_Press" to RussianGuide("Поставьте стопы устойчиво и напрягите корпус. Начните с грифа у верхней части груди, выжмите его над головой по близкой к лицу траектории и верните под контролем.", "Не переразгибайте поясницу и не продолжайте через боль в плече.", "Жим гантелей сидя с лёгким весом или жим landmine."),
+        "Romanian_Deadlift" to RussianGuide("Держите вес перед бёдрами. Отведите таз назад с мягко согнутыми коленями, опуская вес вдоль ног до выраженного, но контролируемого натяжения задней поверхности бедра; вернитесь за счёт разгибания таза.", "Не превращайте движение в присед и не округляйте спину ради большей глубины.", "Наклон-тазовый шарнир без веса или тяга гири с возвышения."),
+        "Full_Range-Of-Motion_Lat_Pulldown" to RussianGuide("Сядьте, зафиксируйте бёдра под упорами и возьмитесь за рукоять. Опустите плечи, затем потяните рукоять к верхней части груди и медленно верните вверх.", "Не отклоняйтесь далеко назад, не тяните за голову и не бросайте вес в верхней точке.", "Подтягивания с резиной или тяга блока нейтральным хватом."),
+        "Leg_Press" to RussianGuide("Расположите стопы на платформе так, чтобы колени двигались по направлению носков. Опускайте платформу до глубины, при которой таз и поясница остаются прижатыми; выжмите, не запирая колени.", "Не отрывайте таз от спинки и не сводите колени внутрь.", "Приседание к опоре или сплит-присед без веса."),
+        "Lying_Leg_Curls" to RussianGuide("Настройте валик чуть выше пяток и лягте ровно. Согните колени, подтягивая валик к бёдрам, затем медленно разогните ноги.", "Не поднимайте таз и не бросайте валик в нижней точке.", "Сгибание ног сидя или ягодичный мост с шагами.")
+    )
     @Volatile private var cache: List<Exercise>? = null
     private val russianNames = mapOf(
         "3_4_Sit-Up" to "Подъёмы корпуса на 3/4", "90_90_Hamstring" to "Растяжка задней поверхности бедра 90/90",
@@ -89,13 +106,15 @@ object OpenExerciseLibrary {
                 val category = category(primary, text(row, "category"))
                 val originalGear = text(row, "equipment")
                 val englishMuscles = primary + array(row, "secondaryMuscles")
-                ExerciseSourceMetadata.put(id, ExerciseSourceInfo(level(text(row, "level")), text(row, "mechanic").ifBlank { text(row, "category") }, english, listOf(sourceId.replace('_', ' '), sourceId.replace('_', ' ').replace('-', ' '), english, originalGear) + englishMuscles))
+                val guide = russianGuides[sourceId]
+                ExerciseSourceMetadata.put(id, ExerciseSourceInfo(level(text(row, "level")), text(row, "mechanic").ifBlank { text(row, "category") }, english, listOf(sourceId.replace('_', ' '), sourceId.replace('_', ' ').replace('-', ' '), english, originalGear) + englishMuscles,
+                    primaryMuscles = primaryRu.joinToString(", "), secondaryMuscles = secondaryRu.joinToString(", "), commonErrors = guide?.errors.orEmpty(), alternatives = guide?.alternatives.orEmpty(), localizedGuide = guide != null))
                 Exercise(id = id, name = russianNames[sourceId] ?: english, category = category,
-                    technique = instructionList.mapIndexed { i, step -> "${i + 1}. $step" }.joinToString("\n"),
+                    technique = guide?.technique ?: instructionList.mapIndexed { i, step -> "${i + 1}. $step" }.joinToString("\n"),
                     muscles = (primaryRu + secondaryRu).distinct().joinToString(", "),
-                    equipment = gear[gearEn.lowercase(Locale.ROOT)] ?: gearEn.replaceFirstChar { it.uppercase() },
+                    equipment = if(originalGear.isBlank() || gearEn == "unspecified") "Не указано источником" else gear[gearEn.lowercase(Locale.ROOT)] ?: gearEn.replaceFirstChar { it.uppercase() },
                     sets = 3, reps = 10, seconds = 0, rest = 60,
-                    notes = "Открытая запись: ${text(row, "level").ifBlank { "уровень не указан" }} · инструкция на английском. Сверьте технику с тренером при сомнении.", builtIn = true)
+                    notes = "Открытая запись: ${text(row, "level").ifBlank { "уровень не указан" }} · ${if(guide == null) "исходная инструкция на английском" else "краткая русская редакция FitProgressAI"}. Это общая справка, не медицинская рекомендация.", builtIn = true)
             }.getOrNull() }
             require(rows.map { it.id }.distinct().size == rows.size) { "Exercise dataset has duplicate identifiers" }
             Log.i("FitExerciseLibrary", "Loaded ${rows.size} unique offline exercises from $SOURCE@$REVISION")

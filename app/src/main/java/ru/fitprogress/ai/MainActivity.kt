@@ -41,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.*
 import java.time.format.DateTimeFormatter
@@ -79,7 +80,7 @@ private val Accent = Color(0xFFB4F667)
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(route !in listOf("home", "catalog", "calendar", "running", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
-                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress · 2.1", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress AI · 3.0", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 IconButton(onClick = { if(route != "settings") nav.navigate("settings") }) { Icon(Icons.Default.Settings, "Настройки") }
             }
         }, bottomBar = {
@@ -148,22 +149,24 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 }
 @Composable fun CatalogScreen(vm: FitViewModel, edit: (String) -> Unit) {
     val exercises by vm.exercises.collectAsStateWithLifecycle(); var query by rememberSaveable { mutableStateOf("") }; var category by rememberSaveable { mutableStateOf("Все") }
-    var equipment by rememberSaveable { mutableStateOf("Любое") }; var level by rememberSaveable { mutableStateOf("Любой") }
+    var equipment by rememberSaveable { mutableStateOf("Любое") }; var level by rememberSaveable { mutableStateOf("Любой") }; var type by rememberSaveable { mutableStateOf("Любой тип") }; var origin by rememberSaveable { mutableStateOf("Все источники") }
     val search = remember(exercises) { ExerciseSearchIndex(exercises) }
     val equipmentOptions = remember(exercises) { listOf("Любое") + exercises.map { it.equipment }.distinct().sorted() }
     val levelOptions = listOf("Любой", "Начинающий", "Средний", "Продвинутый", "Не указан источником")
-    val matches = remember(search, query, category, equipment, level) { search.filter(query, category, equipment, level) }
+    val matches = remember(search, query, category, equipment, level, type, origin) { search.filter(query, category, equipment, level, type, origin) }
     Page {
         item { Title("Каталог упражнений", "${search.size} записей · поиск на устройстве · офлайн") }
         item { Field("Поиск упражнения", query, { query = it }) }
         item { Choice(listOf("Все") + categories, category) { category = it } }
         item { Choice(equipmentOptions, equipment) { equipment = it } }
         item { Choice(levelOptions, level) { level = it } }
+        item { Choice(listOf("Любой тип", "strength", "cardio", "stretching"), type) { type = it } }
+        item { Choice(listOf("Все источники", "Встроенные", "Мои"), origin) { origin = it } }
         item { Text("Найдено: ${matches.size}", style = MaterialTheme.typography.labelMedium) }
         item { Action("Создать упражнение") { edit("new") } }
         if(matches.isEmpty()) item { Empty("Ничего не найдено. Измените фильтры или создайте своё упражнение.") }
         items(matches, key = { it.id }) { e ->
-            Card(onClick = { edit(e.id) }, shape = RoundedCornerShape(22.dp)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { ExerciseArt(e, Modifier.size(76.dp)); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(e.name, fontWeight = FontWeight.Bold); Text(e.category, color = MaterialTheme.colorScheme.primary); Text("${e.sets} × ${if(e.seconds > 0) "${e.seconds} сек" else "${e.reps} повт"} · ${e.equipment}", style = MaterialTheme.typography.bodySmall); OpenExerciseLibrary.sourceInfo(e.id)?.let { Text("${it.level} · ${if(it.type.isBlank()) "упражнение" else it.type}", style = MaterialTheme.typography.labelSmall) } } } }
+            Card(onClick = { edit(e.id) }, shape = RoundedCornerShape(22.dp)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { ExerciseArt(e, Modifier.size(76.dp)); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(e.name, fontWeight = FontWeight.Bold, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis); Text(e.category, color = MaterialTheme.colorScheme.primary); Text(e.muscles, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis); Text("${e.sets} × ${if(e.seconds > 0) "${e.seconds} сек" else "${e.reps} повт"} · ${e.equipment}", style = MaterialTheme.typography.bodySmall); OpenExerciseLibrary.sourceInfo(e.id)?.let { Text("${it.level} · ${if(it.localizedGuide) "русская редакция" else "оригинал EN"}", style = MaterialTheme.typography.labelSmall) } } } }
         }
     }
 }
@@ -181,7 +184,18 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     fun build(copy: Boolean): Exercise = initial.copy(id = if(initial.builtIn || copy) newId() else initial.id, name = name.trim(), category = category, technique = technique, muscles = muscles, equipment = equipment, imageUri = image, sets = sets.toIntOrNull() ?: -1, reps = reps.toIntOrNull() ?: -1, weight = weight.replace(',', '.').toDoubleOrNull() ?: -1.0, seconds = seconds.toIntOrNull() ?: -1, rest = rest.toIntOrNull() ?: -1, notes = notes, builtIn = false)
     Page {
         item { Title(if(id == "new") "Новое упражнение" else initial.name, if(initial.builtIn) "Сохранение создаст вашу версию упражнения" else "Ваше упражнение") }
-        OpenExerciseLibrary.sourceInfo(initial.id)?.let { info -> item { Text("Оригинальное название: ${info.englishName} · ${info.level}. Пошаговая инструкция предоставлена на английском из открытого источника.", style = MaterialTheme.typography.bodySmall) } }
+        OpenExerciseLibrary.sourceInfo(initial.id)?.let { info -> item { Panel {
+            Text("Открытый источник · ${info.level}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text("Источник: free-exercise-db · Unlicense")
+            Text("Оригинальное название: ${info.englishName}")
+            Text("Основные мышцы: ${info.primaryMuscles.ifBlank { "указаны в карточке" }}")
+            if(info.secondaryMuscles.isNotBlank()) Text("Дополнительные мышцы: ${info.secondaryMuscles}")
+            if(info.commonErrors.isNotBlank()) Text("Типичные ошибки: ${info.commonErrors}")
+            if(info.alternatives.isNotBlank()) Text("Варианты: ${info.alternatives}")
+            Text("Безопасность: ${info.safety}")
+            Text(if(info.localizedGuide) "Техника: русская редакция FitProgressAI." else "Техника сохранена на языке оригинала источника (английский).")
+            Text("Медиа источника не включены. Изображение карточки — локальная иллюстрация или пользовательский файл.", style = MaterialTheme.typography.bodySmall)
+        } } }
         item { ExerciseArt(initial.copy(imageUri = image), Modifier.fillMaxWidth().height(180.dp)) }
         item { OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }) { Text("Выбрать изображение") } }
         item { Field("Название", name, { name = it }) }; item { Choice(categories, category) { category = it } }
@@ -229,7 +243,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     }) { Text(if(complete) "Выполнено" else "Сохранить") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Отмена") } })
 }
 @Composable fun WorkoutScreen(vm: FitViewModel, id: String, back: () -> Unit) {
-    val all by vm.workouts.collectAsStateWithLifecycle(); val catalog by vm.exercises.collectAsStateWithLifecycle(); val w = all.find { it.id == id }
+    val all by vm.workouts.collectAsStateWithLifecycle(); val catalog by vm.exercises.collectAsStateWithLifecycle(); val profile by vm.profile.collectAsStateWithLifecycle(); val w = all.find { it.id == id }
     if(w == null) { Empty("Загрузка тренировки…"); return }
     val now = clockNow(); val active = w.status in listOf("active", "paused"); val editable = w.status == "planned"; val modifiable = SessionEdits.editable(w); val done = w.status == "done"
     var add by rememberSaveable { mutableStateOf(false) }; var metadata by rememberSaveable { mutableStateOf(false) }; var delete by remember { mutableStateOf(false) }; var finish by rememberSaveable { mutableStateOf(false) }
@@ -297,7 +311,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         if(!w.template) item { OutlinedButton(onClick = { vm.duplicate(w, template = true) }) { Text("Сохранить как шаблон") } }
         if(editable) item { TextButton(onClick = { delete = true }) { Text("Удалить тренировку", color = MaterialTheme.colorScheme.error) } }
     }
-    if(restDialog) RestDialog(vm.profile.value.rest, { restDialog = false }) { vm.rest(id, it); restDialog = false }
+    if(restDialog) RestDialog(profile.rest, { restDialog = false }) { vm.rest(id, it); restDialog = false }
     if(add) {
         var search by remember { mutableStateOf("") }
         AlertDialog(onDismissRequest = { add = false; replacementId = null }, title = { Text("Добавить упражнение") }, text = { Column { Field("Поиск", search, { search = it }); LazyColumn(Modifier.heightIn(max = 360.dp)) { items(catalog.filter { it.name.contains(search, true) }) { e -> TextButton(onClick = { val target = replacementId; if(target == null) vm.addExercise(w, e) else vm.update(id) { SessionEdits.replace(it, target, e) }; replacementId = null; add = false }, modifier = Modifier.fillMaxWidth()) { Text(e.name) } } } } }, confirmButton = { TextButton(onClick = { add = false; replacementId = null }) { Text("Закрыть") } })
@@ -357,19 +371,75 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 }
 @Composable fun ProgramsScreen(vm: FitViewModel, applied: () -> Unit, edit: (String) -> Unit) {
     var direction by rememberSaveable { mutableStateOf("Все") }; var selected by remember { mutableStateOf<Program?>(null) }; var startText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }; var error by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }; var levelFilter by rememberSaveable { mutableStateOf("Любой") }; var daysFilter by rememberSaveable { mutableStateOf("Любое число") }; var durationFilter by rememberSaveable { mutableStateOf("Любая") }; var equipmentFilter by rememberSaveable { mutableStateOf("Любое оборудование") }
+    var imported by remember { mutableStateOf<ImportedProgram?>(null) }; var importError by remember { mutableStateOf("") }; var importStart by rememberSaveable { mutableStateOf(LocalDate.now().with(java.time.DayOfWeek.MONDAY).toString()) }; var mappingChooser by remember { mutableStateOf<String?>(null) }; var mappingQuery by rememberSaveable { mutableStateOf("") }
+    val mapping = remember { mutableStateMapOf<String, String>() }; val context = LocalContext.current; val scope = rememberCoroutineScope(); val allExercises by vm.exercises.collectAsStateWithLifecycle()
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch { runCatching { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("Не удалось прочитать файл") } }.onSuccess { content -> runCatching { if(uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase() == "csv") ProgramInterchange.parseCsv(content) else ProgramInterchange.parseJson(content) }.onSuccess { imported = it; importError = ""; mapping.clear() }.onFailure { importError = it.message ?: "Некорректный файл программы" } }.onFailure { importError = it.message ?: "Не удалось открыть файл" } } }
     val saved by vm.workouts.collectAsStateWithLifecycle()
+    val programEquipmentOptions = remember(allExercises) { listOf("Любое оборудование") + allExercises.map { it.equipment }.filter { it.isNotBlank() }.distinct().sorted() }
+    val filteredPrograms = remember(direction, query, levelFilter, daysFilter, durationFilter, equipmentFilter, allExercises) {
+        Catalog.programs.filter { p ->
+            (direction == "Все" || p.direction == direction) && (query.isBlank() || listOf(p.name, p.direction, p.advice, p.exerciseNames.joinToString(" ")).any { it.contains(query, true) }) &&
+                (levelFilter == "Любой" || p.level.equals(levelFilter, true)) && (daysFilter == "Любое число" || p.weekdays.size.toString() == daysFilter.first().toString()) &&
+                (equipmentFilter == "Любое оборудование" || (p.dayExercises.flatten().ifEmpty { p.exerciseNames }.mapNotNull { name -> allExercises.firstOrNull { it.name.equals(name, true) }?.equipment }.any { it == equipmentFilter })) &&
+                when(durationFilter) { "До 6 нед." -> p.weeks <= 6; "7–8 нед." -> p.weeks in 7..8; "9+ нед." -> p.weeks >= 9; else -> true }
+        }
+    }
     Page {
         item { Action("Создать свою программу", Icons.Default.Add) { vm.createPlan(edit) } }
+        item { Action("Импортировать программу JSON / CSV", Icons.Default.FileOpen) { importPicker.launch(arrayOf("application/json", "text/csv", "text/comma-separated-values", "text/*")) } }
+        if(importError.isNotBlank()) item { Text(importError, color = MaterialTheme.colorScheme.error) }
         items(saved.filter { it.plan != null }, key = { "custom-${it.id}" }) { w -> WorkoutCard(w) { edit(w.id) } }
         item { Title("Программы", "Общие планы. Все занятия можно менять после добавления.") }
+        item { Field("Поиск по названию и упражнениям", query, { query = it }) }
         item { Choice(listOf("Все") + Catalog.programs.map { it.direction }.distinct(), direction) { direction = it } }
-        items(Catalog.programs.filter { direction == "Все" || it.direction == direction }, key = { it.id }) { p ->
-            Panel { Text(p.name, style = MaterialTheme.typography.titleLarge); Text("${p.weeks} недель · ${p.weekdays.size} занятия/неделю"); Text("Дни: ${p.weekdays.joinToString { listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")[it - 1] }}. Остальные — восстановление."); Text(p.exerciseNames.joinToString(" → ")); Text(if(p.direction == "Бег") "Разминка 5 мин · ${p.sets} × (бег ${p.workSeconds} сек + ходьба ${p.restSeconds} сек) · заминка 5 мин. Каждую неделю +10 сек бега." else "${p.sets} подхода × ${p.reps} повторений · отдых ${p.restSeconds} сек${if(p.workSeconds > 0) " · временной этап ${p.workSeconds} сек" else ""}"); Text(p.advice, style = MaterialTheme.typography.bodySmall); Action("Просмотреть и начать", Icons.Default.CalendarMonth) { selected = p } }
+        item { Choice(listOf("Любой", "Новичок", "Начинающий", "Любитель", "Средний", "Продвинутый"), levelFilter) { levelFilter = it } }
+        item { Choice(listOf("Любое число", "2 дня", "3 дня", "4 дня"), daysFilter) { daysFilter = it } }
+        item { Choice(listOf("Любая", "До 6 нед.", "7–8 нед.", "9+ нед."), durationFilter) { durationFilter = it } }
+        item { Choice(programEquipmentOptions, equipmentFilter) { equipmentFilter = it } }
+        if(filteredPrograms.isEmpty()) item { Empty("По этим фильтрам программы не найдены") }
+        items(filteredPrograms, key = { it.id }) { p ->
+            Panel { Text(p.name, style = MaterialTheme.typography.titleLarge); Text("${p.direction} · ${p.level} · ${p.weeks} недель · ${p.weekdays.size} занятия/неделю", color = MaterialTheme.colorScheme.primary); Text("Дни: ${p.weekdays.joinToString { listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")[it - 1] }}. Остальные — восстановление."); Text(p.exerciseNames.joinToString(" → ")); Text(if(p.direction == "Бег") "Разминка 5 мин · ${p.sets} × (бег ${p.workSeconds} сек + ходьба ${p.restSeconds} сек) · заминка 5 мин. Каждую неделю +10 сек бега." else "${p.sets} подхода × ${p.reps} повторений · отдых ${p.restSeconds} сек${if(p.workSeconds > 0) " · временной этап ${p.workSeconds} сек" else ""}"); Text(p.progression, style = MaterialTheme.typography.bodySmall); Text(p.advice, style = MaterialTheme.typography.bodySmall); Action("Просмотреть и начать", Icons.Default.CalendarMonth) { selected = p } }
         }
     }
     if(selected != null) {
         val p = selected!!; val start = runCatching { LocalDate.parse(startText) }.getOrNull(); val preview = start?.let { Catalog.schedule(p, it) }
         AlertDialog(onDismissRequest = { selected = null }, title = { Text(p.name) }, text = { Column { Field("Начало, ГГГГ-ММ-ДД", startText, { startText = it }); Text("Будет создано ${preview?.size ?: 0} независимых занятий. Затем откройте любое занятие в календаре, замените упражнения и нагрузку, сохраните как свой шаблон."); preview?.take(3)?.forEach { Text("${it.date}: ${it.items.size} упражнений") }; if(error.isNotBlank()) Text(error) } }, confirmButton = { TextButton(onClick = { if(preview == null) error = "Проверьте дату" else vm.exclusive { vm.repo.saveAll(preview); selected = null; applied() } }) { Text("Добавить в мой план") } }, dismissButton = { TextButton(onClick = { selected = null }) { Text("Отмена") } })
+    }
+    if(imported != null) {
+        val p = imported!!; val parsedStart = runCatching { LocalDate.parse(importStart) }.getOrNull(); val start = parsedStart?.takeIf { it.dayOfWeek == java.time.DayOfWeek.MONDAY }
+        val unresolved = p.days.flatMap { it.exercises }.map { it.name }.distinct().filter { name -> mapping[name] == null && allExercises.none { it.name.equals(name, true) } }
+        AlertDialog(onDismissRequest = { imported = null }, title = { Text("Проверка импорта") }, text = {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("${p.name} · ${p.weeks} нед. · ${p.days.size} занятий · ${p.days.sumOf { it.exercises.size }} назначений упражнений")
+                Field("Начало первой недели (понедельник)", importStart, { importStart = it })
+                Text("Каждое назначение будет сопоставлено со встроенным упражнением либо выбрано вручную. Добавленные занятия можно редактировать в календаре.", style = MaterialTheme.typography.bodySmall)
+                p.days.take(12).forEach { day -> Text("Неделя ${day.week} · ${day.weekday}: ${day.title.ifBlank { "занятие" }} — ${day.exercises.joinToString { "${it.name} (${it.sets}×${it.reps}${if(it.seconds > 0) ", ${it.seconds} сек" else ""})" }}", style = MaterialTheme.typography.bodySmall) }
+                if(p.days.size > 12) Text("…ещё ${p.days.size - 12} занятий")
+                unresolved.forEach { name -> TextButton(onClick = { mappingChooser = name; mappingQuery = name }) { Text("Сопоставить «$name» → выбрать упражнение") } }
+                if(start == null) Text(if(parsedStart == null) "Введите дату в формате ГГГГ-ММ-ДД" else "Дата первой недели должна приходиться на понедельник", color = MaterialTheme.colorScheme.error)
+                if(unresolved.isNotEmpty()) Text("Осталось сопоставить: ${unresolved.size}", color = MaterialTheme.colorScheme.error)
+            }
+        }, confirmButton = { TextButton(enabled = start != null && unresolved.isEmpty(), onClick = {
+            val monday = start!!; val planId = "imported-${newId()}"
+            val slots = p.days.map { d ->
+                val date = monday.plusDays((d.week - 1L) * 7 + d.weekday - 1L)
+                val items = d.exercises.map { e ->
+                    val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } } ?: allExercises.first { it.name.equals(e.name, true) }
+                    WorkoutItem(exerciseId = canonical.id, name = canonical.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weightKg, seconds = e.seconds) }, rest = e.restSeconds, muscleGroup = canonical.category)
+                }
+                Workout(name = "${p.name} · неделя ${d.week} · ${d.title.ifBlank { "занятие" }}", date = date.toString(), items = items, program = planId, notes = "Импортирована пользователем · ${p.direction} · ${p.level}")
+            }
+            vm.exclusive { vm.repo.saveAll(slots); imported = null; applied() }
+        }) { Text("Добавить ${p.days.size} занятий") } }, dismissButton = { TextButton(onClick = { imported = null }) { Text("Отмена") } })
+        if(mappingChooser != null) AlertDialog(onDismissRequest = { mappingChooser = null }, title = { Text("Сопоставление: ${mappingChooser}") }, text = {
+            Column {
+                Field("Поиск в каталоге", mappingQuery, { mappingQuery = it })
+                val candidates = allExercises.filter { mappingQuery.isBlank() || listOf(it.name, it.category, it.muscles, it.equipment).any { text -> text.contains(mappingQuery, true) } }
+                LazyColumn(Modifier.heightIn(max = 360.dp)) { items(candidates, key = { it.id }) { e -> TextButton(onClick = { mapping[mappingChooser!!] = e.name; mappingChooser = null }) { Text("${e.name} · ${e.category}") } } }
+                if(candidates.isEmpty()) Text("Подходящих записей нет")
+            }
+        }, confirmButton = { TextButton(onClick = { mappingChooser = null }) { Text("Закрыть") } })
     }
 }
 @Composable fun RecommendationsScreen(vm: FitViewModel, applied: () -> Unit) {
