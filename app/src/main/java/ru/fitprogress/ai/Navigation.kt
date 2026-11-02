@@ -5,10 +5,12 @@ import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 import kotlin.math.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -38,9 +40,10 @@ object RouteMath {
     }
     data class Progress(val distanceFromRouteMeters: Double, val traveledMeters: Double, val remainingMeters: Double, val offRoute: Boolean)
     /** Nearest point on every route segment in a local tangent plane; never adds distance to the workout. */
-    fun progress(route: NavigationRoute, fix: RouteCoordinate, offRouteThresholdMeters: Double = 45.0): Progress {
+    fun progress(route: NavigationRoute, fix: RouteCoordinate, offRouteThresholdMeters: Double = 45.0, previousAlongMeters: Double? = null, movedMeters: Double? = null): Progress {
         require(offRouteThresholdMeters > 0)
-        var bestCross = Double.POSITIVE_INFINITY; var bestAlong = 0.0; var accumulated = 0.0
+        data class Candidate(val cross: Double, val along: Double)
+        val candidates = mutableListOf<Candidate>(); var accumulated = 0.0
         route.points.zipWithNext().filter { it.first.segment == it.second.segment }.forEach { (a, b) ->
             val lat0 = Math.toRadians((a.latitude + b.latitude + fix.latitude) / 3.0)
             val ax = Math.toRadians(a.longitude - fix.longitude) * EARTH * cos(lat0); val ay = Math.toRadians(a.latitude - fix.latitude) * EARTH
@@ -49,9 +52,20 @@ object RouteMath {
             val t = if(length2 == 0.0) 0.0 else (-(ax * dx + ay * dy) / length2).coerceIn(0.0, 1.0)
             val cross = hypot(ax + t * dx, ay + t * dy)
             val length = sqrt(length2)
-            if(cross < bestCross) { bestCross = cross; bestAlong = accumulated + length * t }
+            candidates += Candidate(cross, accumulated + length * t)
             accumulated += length
         }
+        val expected = previousAlongMeters?.plus((movedMeters ?: 0.0).coerceAtLeast(0.0))
+        val chosen = candidates.minByOrNull { candidate ->
+            val continuityPenalty = expected?.let { target ->
+                val backwards = (target - candidate.along - 25.0).coerceAtLeast(0.0)
+                val jumpedAhead = (candidate.along - target - (movedMeters ?: 0.0).coerceAtLeast(0.0) - 120.0).coerceAtLeast(0.0)
+                backwards * 3.0 + jumpedAhead * 1.5
+            } ?: 0.0
+            candidate.cross + continuityPenalty
+        }
+        var bestCross = chosen?.cross ?: Double.POSITIVE_INFINITY
+        var bestAlong = chosen?.along ?: 0.0
         if(bestCross == Double.POSITIVE_INFINITY) bestCross = distance(fix, route.points.first())
         val remaining = (route.distanceMeters - bestAlong).coerceAtLeast(0.0)
         return Progress(bestCross, bestAlong, remaining, bestCross > offRouteThresholdMeters)
@@ -66,6 +80,38 @@ object RouteMath {
             RouteCoordinate(Math.toDegrees(lat), Math.toDegrees(lon))
         }
     }
+}
+
+/** Requires repeated accurate fixes before declaring a deviation; retains route progress across crossings. */
+class RouteDeviationMonitor(private val thresholdMeters: Double = 45.0, private val confirmations: Int = 3) {
+    private var previous: RouteCoordinate? = null
+    private var previousAlong: Double? = null
+    private var outsideCount = 0
+    private var activeRouteId: String? = null
+    fun update(route: NavigationRoute, fix: RouteCoordinate, accuracyMeters: Float): RouteMath.Progress? {
+        if(accuracyMeters > 35f || !accuracyMeters.isFinite() || accuracyMeters < 0f) return null
+        if(activeRouteId != route.id) { reset(); activeRouteId = route.id }
+        val moved = previous?.let { RouteMath.distance(it, fix) }
+        val progress = RouteMath.progress(route, fix, thresholdMeters, previousAlong, moved)
+        previous = fix
+        if(progress.offRoute) outsideCount++ else outsideCount = 0
+        previousAlong = progress.traveledMeters
+        return progress.copy(offRoute = outsideCount >= confirmations)
+    }
+    fun reset() { previous = null; previousAlong = null; outsideCount = 0; activeRouteId = null }
+}
+
+/** A per-run circuit breaker for automatic requests. */
+class AutoRerouteGate(private val cooldownMs: Long = 120_000L, private val maxAttempts: Int = 3) {
+    private var lastAttemptMs = Long.MIN_VALUE
+    private var attempts = 0
+    private var inFlight = false
+    fun tryBegin(nowMs: Long): Boolean {
+        if(inFlight || attempts >= maxAttempts || (lastAttemptMs != Long.MIN_VALUE && nowMs - lastAttemptMs < cooldownMs)) return false
+        inFlight = true; attempts++; lastAttemptMs = nowMs; return true
+    }
+    fun finish() { inFlight = false }
+    fun reset() { lastAttemptMs = Long.MIN_VALUE; attempts = 0; inFlight = false }
 }
 
 interface RoutingBackend {
@@ -128,13 +174,69 @@ class ValhallaRoutingBackend(baseUrl: String, private val transport: RoutingTran
     }
     override suspend fun loop(start: RouteCoordinate, mode: RouteMode, targetMeters: Double): NavigationRoute {
         require(targetMeters in 1000.0..50000.0)
-        val attempts = listOf(0.8, 1.0, 1.2).map { factor ->
+        val attempts = listOf(0.82, 1.0, 1.18).mapNotNull { factor ->
             val via = RouteMath.loopWaypoints(start, targetMeters, mode, factor)
-            val result = route(RouteRequest(listOf(start) + via + start, mode)).firstOrNull() ?: throw RoutingException("Маршрут не найден", "no_route")
-            result.copy(name = "Круговой · ${mode.label}", targetMeters = targetMeters)
+            try { route(RouteRequest(listOf(start) + via + start, mode)).firstOrNull()?.copy(name = "Круговой · ${mode.label}", targetMeters = targetMeters) }
+            catch(e: CancellationException) { throw e }
+            catch(e: RoutingException) { if(e.category in setOf("network", "rate_limit")) throw e else null }
         }
+        if(attempts.isEmpty()) throw RoutingException("Не удалось построить круг по дорожной сети. Попробуйте другую точку или дистанцию.", "no_route")
         return attempts.minBy { abs(it.distanceMeters - targetMeters) }.also { best ->
             if(abs(best.distanceMeters - targetMeters) / targetMeters > 0.25) throw RoutingException("Не удалось построить круг близкой длины. Попробуйте другую дистанцию или точки.", "distance_unavailable")
+        }
+    }
+}
+
+data class GeocodedPlace(val name: String, val coordinate: RouteCoordinate)
+fun interface GeocodingTransport { fun get(url: String): String }
+class UrlConnectionGeocodingTransport : GeocodingTransport {
+    override fun get(url: String): String {
+        val connection = try { URL(url).openConnection() as HttpURLConnection } catch(e: Exception) { throw RoutingException("Не удалось подключиться к поиску адресов", "network", e) }
+        try {
+            connection.requestMethod = "GET"; connection.connectTimeout = 7000; connection.readTimeout = 10000
+            connection.setRequestProperty("Accept", "application/json"); connection.setRequestProperty("User-Agent", "FitProgressAI/3.0 (+https://github.com/xatabihc/train)")
+            val code = connection.responseCode
+            if(code !in 200..299) throw RoutingException(if(code == 429) "Поиск адресов временно ограничил запросы" else "Поиск адресов недоступен (HTTP $code)", if(code == 429) "rate_limit" else "http_$code")
+            val stream = connection.inputStream
+            return stream.use { input ->
+                val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(4096); var total = 0
+                while(true) { val n = input.read(buffer); if(n < 0) break; total += n; if(total > 1_000_000) throw RoutingException("Ответ поиска адресов слишком велик", "invalid_response"); out.write(buffer, 0, n) }
+                out.toString(Charsets.UTF_8.name())
+            }
+        } catch(e: RoutingException) { throw e } catch(e: Exception) { throw RoutingException("Нет ответа от поиска адресов", "network", e) } finally { connection.disconnect() }
+    }
+}
+private object NominatimRequestGate {
+    private val mutex = Mutex(); private var lastRequestMs = 0L
+    suspend fun waitTurn() = mutex.withLock { val now = System.currentTimeMillis(); val wait = (1100L - (now - lastRequestMs)).coerceAtLeast(0); if(wait > 0) delay(wait); lastRequestMs = System.currentTimeMillis() }
+}
+class NominatimGeocoder(baseUrl: String = "https://nominatim.openstreetmap.org", private val transport: GeocodingTransport = UrlConnectionGeocodingTransport(), private val beforeRequest: suspend () -> Unit = { NominatimRequestGate.waitTurn() }) {
+    private val endpoint = URL(baseUrl.trim()).let { url ->
+        require(url.protocol in listOf("https", "http") && url.host.isNotBlank() && url.userInfo == null && url.query == null && url.ref == null)
+        require(url.protocol == "https" || url.host in listOf("localhost", "127.0.0.1", "10.0.2.2") || url.host.startsWith("192.168.") || url.host.startsWith("10."))
+        url.toString().trimEnd('/')
+    }
+    private val cache = LinkedHashMap<String, List<GeocodedPlace>>(16, .75f, true)
+    suspend fun search(query: String): List<GeocodedPlace> {
+        val normalized = query.trim().replace(Regex("\\s+"), " ")
+        require(normalized.length in 3..120) { "Введите адрес длиной от 3 до 120 символов" }
+        synchronized(cache) { cache[normalized.lowercase()]?.let { return it } }
+        beforeRequest()
+        val url = "$endpoint/search?format=jsonv2&limit=5&accept-language=ru&q=${URLEncoder.encode(normalized, "UTF-8")}"
+        val places = try { parse(transport.get(url)) } catch(e: RoutingException) { throw e } catch(e: Exception) { throw RoutingException("Ответ геокодера повреждён", "invalid_response", e) }
+        synchronized(cache) { cache[normalized.lowercase()] = places; while(cache.size > 50) cache.remove(cache.keys.first()) }
+        return places
+    }
+    companion object {
+        fun parse(json: String): List<GeocodedPlace> {
+            val array = try { JsonParser.parseString(json).asJsonArray } catch(e: Exception) { throw RoutingException("Ответ геокодера повреждён", "invalid_response", e) }
+            if(array.size() > 5) throw RoutingException("Геокодер вернул слишком много результатов", "invalid_response")
+            return array.mapNotNull { node -> runCatching {
+                val obj = node.asJsonObject; val name = obj.get("display_name").asString.take(300)
+                val point = RouteCoordinate(obj.get("lat").asString.toDouble(), obj.get("lon").asString.toDouble())
+                require(name.isNotBlank() && point.latitude.isFinite() && point.latitude in -90.0..90.0 && point.longitude.isFinite() && point.longitude in -180.0..180.0)
+                GeocodedPlace(name, point)
+            }.getOrNull() }
         }
     }
 }

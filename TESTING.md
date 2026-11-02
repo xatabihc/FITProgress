@@ -120,6 +120,33 @@ python3 tools/package-android-tests.py
 
 # Проверки FitProgressAI 2.1-dev
 
+## GPS quality pass and build environment — 2026-11-02
+
+### Реально выполнено
+
+| Проверка | Результат |
+|---|---|
+| `./tools/run-domain-tests.sh` | **145 passed, 0 failed**; включая matcher на самопересечении, фильтр дрожания GPS, circuit breaker reroute и parsing/cache Nominatim |
+| Offline Android source compilation | Kotlin/Compose PASS, Room v2 generated Java PASS, Android-test sources PASS; это не выполнение Android instrumentation |
+| APK signature/package/alignment | PASS для offline-packaged APK; applicationId `ru.fitprogress.ai`, version 6 / `3.0-dev`, signer SHA-256 прежний `2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef`, `zipalign -P 16 -c -v 4` PASS |
+| Standard Gradle wrapper | BLOCKED до Gradle tasks: wrapper lock path `.gradle/wrapper/dists/gradle-8.11.1-bin/...zip.lck` read-only |
+| Direct Gradle 8.11.1 | BLOCKED до Gradle tasks: daemon socket `java.net.SocketException: Operation not permitted`, даже с writable `/tmp` Gradle home и offline dependency cache |
+| `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest` Gradle tasks | **Не выполнены**; ошибок задач нет, потому что Gradle daemon не запустился |
+| Physical device / ADB | Не проверено; среда запрещает создание ADB socket |
+
+### Offline APK (не стандартная Gradle-сборка)
+
+`python3 tools/offline-android-build.py --android-tests --package` скомпилировал source against previously resolved Gradle intermediates и вручную перепаковал APK. Предыдущая ошибка offline compiler была вызвана его classpath-фильтром: он исключал `com.squareup.okhttp3`/`com.squareup.okio`, хотя MapLibre HttpRequestUtil использует OkHttp. Фильтр исправлен; повторная компиляция Android Kotlin/Compose, Room v2 и тестовых исходников прошла. Этот механизм не выполняет Gradle Sync, dependency resolution, lint или instrumentation.
+
+APK: `app/build/outputs/apk/debug/app-debug.apk` (60,914,851 bytes, SHA-256 `ec6c08df511d77f5780e05174f24664db31cafa0b31a9149e7ce3fa37a191f6b`). APK реально подписан и выровнен; **не маркировать его как стандартную Gradle-сборку**. Реальные APK upgrade/data-preservation проверки на устройстве не проводились.
+
+### Что осталось проверить
+
+- Запустить Gradle задачи в среде, где Gradle wrapper cache writable и daemon sockets разрешены; не использовать offline APK как замену `assembleDebug`/Lint.
+- Выполнить `connectedDebugAndroidTest` на изолированном тестовом устройстве, не стирая приложение пользователя.
+- Установить текущий APK поверх предыдущей версии с совпадающим signer и проверить Room/history migration на копии реального пользовательского состояния.
+- Проверить физический GPS, MapLibre tiles, сохранённый маршрут без сети и автоматическое перестроение на реальной дороге/параллельной дорожке.
+
 ## GPS маршрутизация — новый прогон 2026-11-02
 
 Добавлены `NavigationTest`: фактическая haversine distance/projection и off-route threshold, route validation, GPX export/import roundtrip, отклонение некорректных координат и XXE, Valhalla costing/body/instructions parse и типизированный offline failure, Backup v4 saved route. Unit-тесты используют фиксированные точки/фиктивный Valhalla transport, но не рисуют/не сохраняют синтетические значения в пользовательские записи.

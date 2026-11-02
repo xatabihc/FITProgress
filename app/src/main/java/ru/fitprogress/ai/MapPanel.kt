@@ -28,6 +28,7 @@ import org.maplibre.geojson.*
 @Composable fun MapPanel(
     points: List<GeoPoint>, plannedRoute: NavigationRoute? = null, selectionEnabled: Boolean = false,
     markers: List<RouteCoordinate> = emptyList(), currentLocation: RouteCoordinate? = points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) },
+    followUser: Boolean = false,
     onMapTap: (RouteCoordinate) -> Unit = {}
 ) {
     val context = LocalContext.current; val owner = LocalLifecycleOwner.current
@@ -66,14 +67,14 @@ import org.maplibre.geojson.*
         }
         onDispose { owner.lifecycle.removeObserver(observer); stop(); mapView.onDestroy() }
     }
-    LaunchedEffect(points.size, map, styleLoaded) {
+    LaunchedEffect(points.size, points.lastOrNull()?.lat, points.lastOrNull()?.lon, points.lastOrNull()?.segment, map, styleLoaded) {
         val m = map ?: return@LaunchedEffect
         if(styleLoaded) {
             val features = points.groupBy { it.segment }.values.filter { it.size >= 2 }.map { segment -> Feature.fromGeometry(LineString.fromLngLats(segment.map { Point.fromLngLat(it.lon, it.lat) })) }
             m.style?.getSourceAs<GeoJsonSource>("recorded")?.setGeoJson(FeatureCollection.fromFeatures(features))
         }
     }
-    LaunchedEffect(plannedRoute?.id, plannedRoute?.points?.size, map, styleLoaded) {
+    LaunchedEffect(plannedRoute?.id, plannedRoute?.points?.hashCode(), map, styleLoaded) {
         val m = map ?: return@LaunchedEffect
         if(styleLoaded) {
             val route = plannedRoute
@@ -91,6 +92,11 @@ import org.maplibre.geojson.*
             if(plannedRoute == null && points.isEmpty() && currentLocation != null) m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLocation.latitude, currentLocation.longitude), 15.0))
         }
     }
+    LaunchedEffect(followUser, currentLocation, map, styleLoaded) {
+        val m = map ?: return@LaunchedEffect
+        val location = currentLocation ?: return@LaunchedEffect
+        if(followUser && styleLoaded) m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 17.0), 450)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxWidth().height(300.dp))
         Text("© OpenStreetMap contributors · карты требуют сети или действительного кэша", style = MaterialTheme.typography.labelSmall)
@@ -98,6 +104,7 @@ import org.maplibre.geojson.*
         if(error.isNotBlank()) Text(error, style = MaterialTheme.typography.bodySmall)
         if(points.isEmpty() && plannedRoute == null) Text(if(currentLocation == null) "Ожидается позиция GPS или выбор точки на карте." else "Синяя точка — последняя позиция устройства.")
         if(plannedRoute != null) Text("Маршрут по дорожной сети · %.2f км · %s".format(plannedRoute.distanceMeters / 1000, RouteMode.valueOf(plannedRoute.mode).label), style = MaterialTheme.typography.labelMedium)
+        if(plannedRoute != null) { Text("Предпросмотр маршрута доступен без карты и сети", style = MaterialTheme.typography.labelSmall); RouteFallback(plannedRoute.points.map { GeoPoint(it.latitude, it.longitude, 0f, plannedRoute.createdAt, it.segment) }) }
         if(points.isNotEmpty()) { Text("Фактический GPS-трек", style = MaterialTheme.typography.labelMedium); RouteFallback(points) }
     }
 }

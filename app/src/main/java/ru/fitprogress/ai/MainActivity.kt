@@ -471,8 +471,10 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var pick by rememberSaveable { mutableStateOf("start") }
     var loop by rememberSaveable { mutableStateOf(false) }; var targetKm by rememberSaveable { mutableStateOf("5") }
     var route by remember { mutableStateOf<NavigationRoute?>(null) }; var busy by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }
+    var address by rememberSaveable { mutableStateOf("") }; var geocodeBusy by remember { mutableStateOf(false) }; var places by remember { mutableStateOf<List<GeocodedPlace>>(emptyList()) }
     var deviceLocation by remember { mutableStateOf(active?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }) }
     val scope = rememberCoroutineScope()
+    val geocoder = remember { NominatimGeocoder() }
     fun readLastLocation() {
         try {
             val manager = context.getSystemService(android.location.LocationManager::class.java)
@@ -520,6 +522,10 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             Field("Старт · широта", startLat, { startLat = it }, true)
             Field("Старт · долгота", startLon, { startLon = it }, true)
             if(!loop) { Field("Финиш · широта", finishLat, { finishLat = it }, true); Field("Финиш · долгота", finishLon, { finishLon = it }, true) }
+            Field("Найти адрес вручную", address, { address = it; places = emptyList() })
+            OutlinedButton(enabled = !geocodeBusy && address.trim().length >= 3, onClick = { geocodeBusy = true; places = emptyList(); error = ""; scope.launch { try { places = withContext(Dispatchers.IO) { geocoder.search(address) }; if(places.isEmpty()) error = "Адрес не найден. Попробуйте уточнить запрос или выберите точку на карте." } catch(e: Exception) { error = e.message ?: "Сервис поиска адреса недоступен" } finally { geocodeBusy = false } } }, modifier = Modifier.fillMaxWidth()) { Text(if(geocodeBusy) "Ищем адрес…" else "Найти адрес") }
+            places.forEach { place -> TextButton(onClick = { setPoint(pick, place.coordinate); deviceLocation = place.coordinate; places = emptyList(); error = "Точка установлена: ${place.name}" }, modifier = Modifier.fillMaxWidth()) { Text(place.name, maxLines = 3) } }
+            Text("Поиск отправляет только адресный запрос в Nominatim OpenStreetMap. Не вводите личные или конфиденциальные адреса. Запрос выполняется только вручную, без автодополнения; результат кэшируется в сессии.", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = { pick = "via" }, modifier = Modifier.fillMaxWidth()) { Text("Добавить промежуточную точку на карте") }
             if(viaText.isNotBlank()) Text("Промежуточные точки: $viaText", style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(loop, { loop = it }); Text("Круговой маршрут на заданную дистанцию") }
@@ -558,7 +564,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 TextButton(onClick = { vm.action { vm.repo.deleteRoute(favorite.id) } }) { Text("Удалить") }
             } }
         }
-        item { Text("При построении выбранные координаты отправляются на указанный Valhalla backend (${profile.routingBackendUrl}); тренировки, история и профиль туда не передаются. При отсутствии сети планирование недоступно, но GPS-секундомер и запись продолжаются независимо. Стандартные OSM тайлы нельзя массово скачивать для офлайн-предзагрузки.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("При построении выбранные координаты отправляются на указанный Valhalla backend (${profile.routingBackendUrl}); во время активной навигации текущая позиция может отправляться для автоматического перестроения (не чаще одного запроса за 2 минуты, максимум 3 попытки за пробежку). Тренировки, история и профиль туда не передаются. При отсутствии сети планирование недоступно, но GPS-секундомер и запись продолжаются независимо. Стандартные OSM тайлы нельзя массово скачивать для офлайн-предзагрузки.", style = MaterialTheme.typography.bodySmall) }
     }
 }
 
@@ -566,7 +572,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     val runs by vm.runs.collectAsStateWithLifecycle(); val current = runs.firstOrNull { it.status != "done" && !it.demo }; val tick = clockNow(); val context = LocalContext.current
     val stamp = remember(tick) { AndroidClock.read(context) }
     val launch by vm.runLaunch.collectAsStateWithLifecycle()
-    val signal by RunService.signal.collectAsStateWithLifecycle(); var finish by remember { mutableStateOf(false) }; var manual by rememberSaveable { mutableStateOf(false) }
+    val signal by RunService.signal.collectAsStateWithLifecycle(); var finish by remember { mutableStateOf(false) }; var manual by rememberSaveable { mutableStateOf(false) }; var followGps by rememberSaveable { mutableStateOf(true) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.runPermissionResult() }
     Page {
         item { Title(if(current?.status == "active") "Пробежка идёт" else "Бег в твоём ритме", "Реальный GPS · запись при заблокированном экране") }
@@ -579,7 +585,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             val pace = if(current?.status == "active") Gps.currentPaceAt(current.points, stamp) else null
             Text("Текущий темп: ${formatPace(pace)}"); Text("Текущая скорость: ${pace?.let { "%.1f км/ч".format(60 / it) } ?: "—"}")
         } }
-        if(current != null) item { MapPanel(current.points, plannedRoute = current.navigation, currentLocation = current.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }) }
+        if(current != null) item { if(current.status == "active") TextButton(onClick = { followGps = !followGps }) { Text(if(followGps) "Камера следует за GPS · изменить" else "Следовать за GPS") }; MapPanel(current.points, plannedRoute = current.navigation, currentLocation = current.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }, followUser = current.status == "active" && followGps) }
         if(current?.navigation != null) item {
             val navRoute = current!!.navigation!!; val fix = current!!.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }; val progress = fix?.let { RouteMath.progress(navRoute, it) }
             Panel { Text("Сопровождение · ${RouteMode.valueOf(navRoute.mode).label}", style = MaterialTheme.typography.titleLarge); Text(progress?.let { "Осталось %.2f км".format(it.remainingMeters / 1000) } ?: "Ожидается GPS-позиция маршрута"); if(progress?.offRoute == true) Text("Вы отклонились от маршрута примерно на ${progress.distanceFromRouteMeters.toInt()} м. Нажмите «Перестроить маршрут».", color = MaterialTheme.colorScheme.error) }
@@ -598,7 +604,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         } }
         if(current?.status == "active") item { Action("Пауза", Icons.Default.Pause) { runCatching { RunService.command(context, RunService.PAUSE) }.onFailure { vm.notify(it.message ?: "Не удалось поставить на паузу") } } }
         if(current != null) item { Action("Завершить и сохранить", Icons.Default.Stop) { finish = true } }
-        item { Text("Без интернета записываются координаты и дистанция. Для первого определения GPS выйдите на открытое место. При потере сигнала расстояние не добавляется.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Без интернета секундомер, GPS-запись и сохранённый маршрут продолжают работать; карта показывает локальный предпросмотр, если тайлы недоступны. Для первого определения GPS выйдите на открытое место. При потере сигнала расстояние не добавляется.", style = MaterialTheme.typography.bodySmall) }
         item { OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }) { Text("Настройки геолокации") } }
         item { OutlinedButton(onClick = { manual = true }) { Text("Записать беговую дорожку вручную") } }
         item { Text("История пробежек", style = MaterialTheme.typography.titleLarge) }

@@ -56,7 +56,7 @@ def main():
     cp = [ANDROID, rjar]
     inputs = []
     for group in sorted(CACHE.iterdir()):
-        if not group.name.startswith(('androidx.', 'com.google.android', 'com.google.code.gson', 'com.google.guava', 'org.maplibre', 'org.jetbrains.kotlin', 'org.jetbrains.annotations')):
+        if not group.name.startswith(('androidx.', 'com.google.android', 'com.google.code.gson', 'com.google.guava', 'com.squareup.okhttp3', 'com.squareup.okio', 'org.maplibre', 'org.jetbrains.kotlin', 'org.jetbrains.annotations')):
             continue
         for name in sorted(group.iterdir()):
             if group.name == 'org.jetbrains.kotlin' and not name.name.startswith(('kotlin-stdlib', 'kotlin-reflect')):

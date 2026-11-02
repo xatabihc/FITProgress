@@ -49,6 +49,9 @@ class RunService : Service() {
     }
     private var current: Run? = null
     private var lastFix = 0L
+    private val deviationMonitor = RouteDeviationMonitor()
+    private val rerouteGate = AutoRerouteGate()
+    private var monitoredRunId: String? = null
     private var wakeUntil = 0L
     private var wakeLock: PowerManager.WakeLock? = null
     private val callback = object : LocationCallback() {
@@ -68,7 +71,19 @@ class RunService : Service() {
                         val oldCount = next.points.size
                         next = Gps.appendAt(next, point, stamp)
                         if(Gps.valid(point) && Gps.age(point, stamp) in 0L..20000L) { lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "GPS · ±${location.accuracy.toInt()} м · фильтрация шума" }
-                        if(next.points.size > oldCount) { lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "GPS · точность ±${location.accuracy.toInt()} м" }
+                        if(next.points.size > oldCount) {
+                            lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "GPS · точность ±${location.accuracy.toInt()} м"
+                            val navigation = next.navigation
+                            if(navigation != null) {
+                                if(monitoredRunId != next.id) { monitoredRunId = next.id; deviationMonitor.reset(); rerouteGate.reset() }
+                                val accepted = next.points.last()
+                                val progress = deviationMonitor.update(navigation, RouteCoordinate(accepted.lat, accepted.lon), accepted.accuracy)
+                                if(progress?.offRoute == true) {
+                                    signal.value = "Отклонение подтверждено GPS · готовим перестроение"
+                                    requestAutomaticReroute(next, navigation, RouteCoordinate(accepted.lat, accepted.lon))
+                                }
+                            }
+                        }
                         else if(location.accuracy > 35) signal.value = "Низкая точность GPS · выйдите на открытое место"
                     }
                     val km = (next.distance / 1000).toInt()
@@ -124,6 +139,7 @@ class RunService : Service() {
                     val old = current?.takeIf { it.status != "done" } ?: repo.currentRun()
                     val base = old ?: Run(status = "paused", activeSince = 0)
                     current = RunTimers.resume(base.copy(navigation = requestedRoute ?: base.navigation), AndroidClock.read(this@RunService))
+                    if(monitoredRunId != current!!.id) { monitoredRunId = current!!.id; deviationMonitor.reset(); rerouteGate.reset() }
                     repo.saveRun(current!!)
                     lastFix = android.os.SystemClock.elapsedRealtime(); signal.value = "Ожидаем точные координаты GPS"; running.value = true
                     acquireRunWakeLock()
@@ -144,6 +160,7 @@ class RunService : Service() {
                     val route = intent?.getStringExtra(EXTRA_ROUTE)?.let { BackupCodec.gson.fromJson(it, NavigationRoute::class.java).also(RouteMath::validate) } ?: error("Новый маршрут не передан")
                     val run = current?.takeIf { it.status != "done" } ?: error("Нет активной пробежки")
                     current = run.copy(navigation = route); repo.saveRun(current!!); signal.value = "Маршрут навигации обновлён"
+                    deviationMonitor.reset()
                 }
                 FINISH -> {
                     if(current == null) current = repo.currentRun()
@@ -154,6 +171,33 @@ class RunService : Service() {
             }
         }
         return START_NOT_STICKY // A killed service is recovered as paused, never as silently recording.
+    }
+    private fun requestAutomaticReroute(run: Run, oldRoute: NavigationRoute, from: RouteCoordinate) {
+        if(!rerouteGate.tryBegin(android.os.SystemClock.elapsedRealtime())) return
+        val destination = oldRoute.points.lastOrNull() ?: run { rerouteGate.finish(); return }
+        Log.i("FitRunNavigation", "Automatic reroute requested run=${run.id} route=${oldRoute.id}")
+        scope.launch {
+            try {
+                val profile = repo.profile.first()
+                val backend = ValhallaRoutingBackend(profile.routingBackendUrl)
+                val route = backend.route(RouteRequest(listOf(from, destination), RouteMode.valueOf(oldRoute.mode))).minByOrNull { it.distanceMeters }
+                    ?: throw RoutingException("Сервер не вернул маршрут", "no_route")
+                events.send {
+                    rerouteGate.finish()
+                    val latest = current
+                    if(latest?.id == run.id && latest.status == "active" && latest.navigation?.id == oldRoute.id) {
+                        val updated = route.copy(name = "Перестроенный · ${RouteMode.valueOf(oldRoute.mode).label}")
+                        current = latest.copy(navigation = updated); repo.saveRun(current!!); deviationMonitor.reset()
+                        signal.value = "Маршрут перестроен · %.2f км осталось".format(updated.distanceMeters / 1000)
+                        Log.i("FitRunNavigation", "Automatic reroute applied run=${run.id} distance=${updated.distanceMeters.toInt()}m")
+                    }
+                }
+            } catch(e: CancellationException) { rerouteGate.finish(); throw e }
+            catch(e: Exception) {
+                Log.w("FitRunNavigation", "Automatic reroute failed; GPS continues", e)
+                events.trySend { rerouteGate.finish(); signal.value = if(e is RoutingException && e.category == "network") "Нет сети или сервер недоступен · запись GPS продолжается" else "Не удалось перестроить маршрут · запись GPS продолжается" }
+            }
+        }
     }
     private fun subscribeLocations() {
         if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {

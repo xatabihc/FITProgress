@@ -21,6 +21,57 @@ class NavigationTest {
         assertTrue(RouteMath.distance(r.points.first(), r.points.last()) > 200)
     }
 
+    @Test fun routeMatcherKeepsProgressOnEarlierLegAtSelfIntersection() {
+        val r = NavigationRoute(points = listOf(
+            RouteCoordinate(0.0, -0.002), RouteCoordinate(0.0, 0.0), RouteCoordinate(0.002, 0.0),
+            RouteCoordinate(0.0, 0.0), RouteCoordinate(0.0, 0.002)
+        ), distanceMeters = 900.0)
+        val crossing = RouteCoordinate(0.000001, 0.0)
+        val progress = RouteMath.progress(r, crossing, previousAlongMeters = 220.0, movedMeters = 5.0)
+        assertTrue("matcher jumped to later crossing leg: ${progress.traveledMeters}", progress.traveledMeters < 300.0)
+    }
+
+    @Test fun deviationRequiresThreeAccurateFixesAndIgnoresPoorAccuracy() {
+        val monitor = RouteDeviationMonitor()
+        val r = route()
+        val far = RouteCoordinate(55.001, 37.003)
+        assertFalse(monitor.update(r, far, 12f)!!.offRoute)
+        assertNull(monitor.update(r, far, 60f))
+        assertFalse(monitor.update(r, far, 10f)!!.offRoute)
+        assertTrue(monitor.update(r, far, 10f)!!.offRoute)
+        assertFalse(monitor.update(r, RouteCoordinate(55.001, 37.0), 9f)!!.offRoute)
+    }
+
+    @Test fun rerouteGateLimitsConcurrencyFrequencyAndAttempts() {
+        val gate = AutoRerouteGate(cooldownMs = 1000, maxAttempts = 2)
+        assertTrue(gate.tryBegin(100))
+        assertFalse(gate.tryBegin(101))
+        gate.finish()
+        assertFalse(gate.tryBegin(1099))
+        assertTrue(gate.tryBegin(1100)); gate.finish()
+        assertFalse(gate.tryBegin(2100))
+        gate.reset()
+        assertTrue(gate.tryBegin(0))
+    }
+
+    @Test fun nominatimParserValidatesAndReturnsRussianAddressCoordinates() {
+        val results = NominatimGeocoder.parse("""[{"display_name":"Парк, Москва","lat":"55.75","lon":"37.61"},{"display_name":"bad","lat":"95","lon":"0"}]""")
+        assertEquals(1, results.size)
+        assertEquals("Парк, Москва", results.single().name)
+        assertEquals(37.61, results.single().coordinate.longitude, 0.00001)
+        assertThrows(RoutingException::class.java) { NominatimGeocoder.parse("not json") }
+    }
+
+    @Test fun nominatimSearchIsManualCachedAndEscapesQuery() = runBlocking {
+        var requests = 0; var requestedUrl = ""
+        val geocoder = NominatimGeocoder("https://geo.example", { url -> requests++; requestedUrl = url; """[{"display_name":"Москва","lat":"55.7","lon":"37.6"}]""" }, {})
+        val first = geocoder.search("Москва, парк")
+        val second = geocoder.search("Москва, парк")
+        assertEquals(first, second); assertEquals(1, requests); assertTrue(requestedUrl.contains("%2C"))
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { geocoder.search("x") } }
+        Unit
+    }
+
     @Test fun routeRejectsInvalidAndTooShortCoordinates() {
         assertThrows(IllegalArgumentException::class.java) {
             RouteMath.validate(route().copy(points = listOf(RouteCoordinate(0.0, 0.0))))
