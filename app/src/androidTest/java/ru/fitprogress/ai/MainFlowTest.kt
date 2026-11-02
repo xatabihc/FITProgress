@@ -57,6 +57,16 @@ class MainFlowTest {
         ui.onNode(hasText("0.00 км") or hasText("0,00 км")).assertIsDisplayed()
         ui.onNodeWithText("Начать пробежку").assertExists()
     }
+    @Test fun runRouteBuilderCanOpenAndReturnWithoutGpsPermission() {
+        ui.onNodeWithContentDescription("Бег").performClick()
+        ui.onNodeWithText("Бег в твоём ритме").assertIsDisplayed()
+        ui.onNodeWithTag("page").performScrollToNode(hasText("Построить маршрут"))
+        ui.onNodeWithText("Построить маршрут").performClick()
+        ui.onNodeWithText("Планировщик маршрута").assertIsDisplayed()
+        ui.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        ui.waitForIdle()
+        ui.onNodeWithText("Бег в твоём ритме").assertIsDisplayed()
+    }
     @Test fun createAndApplyUserProgram() {
         scroll("Программы"); ui.onNodeWithText("Программы").performClick()
         scroll("Создать свою программу"); ui.onNodeWithText("Создать свою программу").performClick(); ui.waitForIdle()

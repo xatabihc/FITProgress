@@ -5,9 +5,9 @@
 ## Последняя доработка и проверка сборки
 
 - Добавлены continuity-aware progress matching, подтверждение deviation тремя точными GPS fixes, автоматический reroute (один in-flight, cooldown 2 минуты, максимум 3 попытки на пробежку), address search по нажатию через Nominatim без autocomplete и сессионный кэш, альтернативные радиусы кругового маршрута, GPS-follow камера и локальная карта-превью.
-- `./tools/run-domain-tests.sh`: 145/145 passed. Offline source compiler: Kotlin/Compose, generated Room v2 Java и Android-test sources скомпилированы. `tools/offline-android-build.py` требовал включить OkHttp/Okio в собственный classpath; после исправления source compile прошёл.
-- Standard Gradle wrapper до задач остановлен на read-only `.gradle/...zip.lck`; прямой Gradle 8.11.1 с локальным Gradle home не стартовал из-за `java.net.SocketException: Operation not permitted` при создании daemon socket. Lint и Gradle task execution не пройдены.
-- Offline APK был вручную перепакован/подписан в `app/build/outputs/apk/debug/app-debug.apk`; его signer совпадает с прежним debug signer, но APK не является стандартной Gradle-сборкой. Physical GPS/MapLibre/auto-reroute и upgrade с данными не проверены. Подробная матрица: [TESTING.md](TESTING.md).
+- `./tools/run-domain-tests.sh`: 146/146 passed. Offline source compiler: Kotlin/Compose, generated Room v2 Java и Android-test sources скомпилированы. `tools/offline-android-build.py` требовал включить OkHttp/Okio в собственный classpath; после исправления source compile прошёл. Дополнительный UI test перехода «Бег → планировщик → назад» добавлен позже и ещё не компилировался/не запускался.
+- Позже обнаружены результаты стандартного Gradle: 140 unit tests прошли; Lint 0 errors / 38 warnings; daemon log показывает успешный `assembleDebug` в 16:51. Последние diagnostic-log правки/UI test внесены после сборки и требуют новой компиляции.
+- Текущий APK — стандартный Gradle APK с сохранённой подписью. Physical GPS/MapLibre/auto-reroute и upgrade с данными не проверены. Подробная матрица и ограничения: [TESTING.md](TESTING.md).
 
 ## Реализовано
 

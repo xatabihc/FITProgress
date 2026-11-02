@@ -64,7 +64,7 @@ JDK 17, Android SDK Platform/build-tools 35 и доступ к Google Maven, Mav
 
 Windows: `gradlew.bat`. Сохранены AGP 8.9.2 / Gradle 8.11.1, Kotlin + Compose compiler 2.1.20, Compose BOM 2025.04.01, Room 2.7.1, Navigation 2.8.9, DataStore 1.1.1, WorkManager 2.10.0, Location 21.3.0, MapLibre 11.8.0. SQLite JDBC 3.41.2.2 используется только в JVM-тестах миграции, в приложение не добавлен.
 
-Стандартные Gradle tasks в последней среде не стартовали: wrapper lock находится на read-only mount, а direct Gradle daemon не может создать socket. В ней отдельно пройдены 145 domain/JVM tests и supplemental offline source compilation/package; это не заменяет Gradle Sync, Lint или clean `assembleDebug`. Актуальные детали и точный hash APK приведены в [TESTING.md](TESTING.md).
+В артефактах найден поздний успешный стандартный Gradle `assembleDebug` (16:51); предыдущие стандартные отчёты показывают 140 unit tests и Lint с 0 errors/38 warnings. Текущий domain-набор — 146 tests. Последние диагностические log-правки и новый Android UI test внесены уже после этого APK/compile и требуют следующей Android-компиляции. Подробности, точный hash и непроверенные сценарии приведены в [TESTING.md](TESTING.md).
 
 ### Доступная локальная проверка/упаковка
 

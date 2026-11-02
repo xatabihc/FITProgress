@@ -130,6 +130,13 @@ class NavigationTest {
         assertTrue(requestBody.contains("ru-RU"))
     }
 
+    @Test fun valhallaErrorsAreClassifiedWithoutInventingRouteGeometry() {
+        val noRoute = assertThrows(RoutingException::class.java) { ValhallaResponse.parse("""{"error":"No suitable edges"}""", RouteMode.RUN) }
+        assertEquals("no_route", noRoute.category)
+        val malformed = assertThrows(RoutingException::class.java) { ValhallaResponse.parse("""{"trip":{"legs":[]}}""", RouteMode.WALK) }
+        assertEquals("invalid_response", malformed.category)
+    }
+
     private fun encodePolyline6(points: List<Pair<Double, Double>>): String {
         var lat = 0L; var lon = 0L
         fun encode(value: Long): String {

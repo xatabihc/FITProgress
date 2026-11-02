@@ -545,7 +545,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                         val backend = withContext(Dispatchers.IO) { ValhallaRoutingBackend(profile.routingBackendUrl) }
                         val built = if(loop) backend.loop(start, modeValue, (targetKm.toDoubleOrNull()?.times(1000) ?: 0.0)) else backend.route(RouteRequest(listOf(start) + via + requireNotNull(finish), modeValue, alternates = if(via.isEmpty()) 2 else 0)).firstOrNull() ?: throw RoutingException("Сервис не вернул дорожный маршрут", "no_route")
                         route = built
-                    } catch(e: Exception) { error = when(e) { is RoutingException -> e.message ?: "Ошибка маршрутизатора"; else -> e.message ?: "Не удалось построить маршрут" } }
+                    } catch(e: Exception) {
+                        val category = (e as? RoutingException)?.category ?: e.javaClass.simpleName
+                        android.util.Log.w("FitRoutePlan", "Route planning failed category=$category")
+                        error = when(e) { is RoutingException -> e.message ?: "Ошибка маршрутизатора"; else -> e.message ?: "Не удалось построить маршрут" }
+                    }
                     finally { busy = false }
                 }
             }

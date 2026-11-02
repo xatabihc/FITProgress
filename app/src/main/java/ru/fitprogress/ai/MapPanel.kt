@@ -1,5 +1,6 @@
 package ru.fitprogress.ai
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -49,11 +50,15 @@ import org.maplibre.geojson.*
         owner.lifecycle.addObserver(observer)
         if(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) start()
         if(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) resume()
-        mapView.addOnDidFailLoadingMapListener { error = "Картографические тайлы недоступны. GPS-запись и сохранённая линия маршрута продолжают работать." }
+        mapView.addOnDidFailLoadingMapListener {
+            Log.w("FitMapLibre", "Map tiles/style unavailable; local GPS and route geometry remain available")
+            error = "Картографические тайлы недоступны. GPS-запись и сохранённая линия маршрута продолжают работать."
+        }
         mapView.getMapAsync { m ->
             map = m
             m.addOnMapClickListener { point -> if(selection.value) { tap.value(RouteCoordinate(point.latitude, point.longitude)); true } else false }
             m.setStyle(Style.Builder().fromJson("""{"version":8,"sources":{"osm":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"attribution":"© OpenStreetMap contributors","maxzoom":19}},"layers":[{"id":"background","type":"background","paint":{"background-color":"#202820"}},{"id":"osm","type":"raster","source":"osm"}]}""")) { style ->
+                Log.i("FitMapLibre", "Map style loaded; route overlay sources initialized")
                 style.addSource(GeoJsonSource("recorded", FeatureCollection.fromFeatures(emptyArray<Feature>())))
                 style.addSource(GeoJsonSource("planned", FeatureCollection.fromFeatures(emptyArray<Feature>())))
                 style.addSource(GeoJsonSource("markers", FeatureCollection.fromFeatures(emptyArray<Feature>())))

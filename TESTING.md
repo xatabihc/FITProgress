@@ -126,26 +126,38 @@ python3 tools/package-android-tests.py
 
 | Проверка | Результат |
 |---|---|
-| `./tools/run-domain-tests.sh` | **145 passed, 0 failed**; включая matcher на самопересечении, фильтр дрожания GPS, circuit breaker reroute и parsing/cache Nominatim |
-| Offline Android source compilation | Kotlin/Compose PASS, Room v2 generated Java PASS, Android-test sources PASS; это не выполнение Android instrumentation |
-| APK signature/package/alignment | PASS для offline-packaged APK; applicationId `ru.fitprogress.ai`, version 6 / `3.0-dev`, signer SHA-256 прежний `2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef`, `zipalign -P 16 -c -v 4` PASS |
-| Standard Gradle wrapper | BLOCKED до Gradle tasks: wrapper lock path `.gradle/wrapper/dists/gradle-8.11.1-bin/...zip.lck` read-only |
-| Direct Gradle 8.11.1 | BLOCKED до Gradle tasks: daemon socket `java.net.SocketException: Operation not permitted`, даже с writable `/tmp` Gradle home и offline dependency cache |
-| `testDebugUnitTest`, `lintDebug`, `assembleDebug`, `assembleDebugAndroidTest` Gradle tasks | **Не выполнены**; ошибок задач нет, потому что Gradle daemon не запустился |
-| Physical device / ADB | Не проверено; среда запрещает создание ADB socket |
+| `./tools/run-domain-tests.sh` | **146 passed, 0 failed**; включает новые unit cases для navigation matching/geocoder и Valhalla errors |
+| `testDebugUnitTest` стандартным Gradle | **140 passed, 0 failed** по XML отчётам от 16:32; это более ранний source snapshot, чем последние QA изменения |
+| `lintDebug` стандартным Gradle | Успешный отчёт от 16:33: **0 errors, 38 warnings**; это более ранний source snapshot |
+| `assembleDebug` стандартным Gradle | Daemon log `BUILD SUCCESSFUL` в 16:51; APK/metadata созданы в то же время |
+| APK подпись/package/alignment | Текущий APK проверен: `ru.fitprogress.ai`, version 6 / `3.0-dev`, SHA-256 `7122c6acf334ca5f6389391151d0ac78e7c244d1ce42d230f03d0d613e65214d`, signer SHA-256 `2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef`, apksigner и `zipalign -P 16` PASS |
+| Android test sources / `connectedDebugAndroidTest` | Предыдущие Android tests были скомпилированы offline, но не исполнены; новый navigation UI test добавлен после последнего compile и требует compile/run |
+| Physical device / ADB | Не проверено; ADB socket недоступен |
 
-### Offline APK (не стандартная Gradle-сборка)
+### Ограничения и источник артефактов
 
-`python3 tools/offline-android-build.py --android-tests --package` скомпилировал source against previously resolved Gradle intermediates и вручную перепаковал APK. Предыдущая ошибка offline compiler была вызвана его classpath-фильтром: он исключал `com.squareup.okhttp3`/`com.squareup.okio`, хотя MapLibre HttpRequestUtil использует OkHttp. Фильтр исправлен; повторная компиляция Android Kotlin/Compose, Room v2 и тестовых исходников прошла. Этот механизм не выполняет Gradle Sync, dependency resolution, lint или instrumentation.
+Ранее direct wrapper действительно упирался в read-only `~/.gradle` lock, а отдельный запуск daemon — в `java.net.SocketException: Operation not permitted`. Позднее появился успешный стандартный Gradle assemble и APK; тяжёлые задачи повторно не запускались. `offline-android-build.py` отдельно исправлен: его classpath ранее пропускал OkHttp/Okio. Успешная offline compilation предшествовала последним диагностическим логам и UI test, поэтому она не подтверждает компиляцию этих последних правок.
 
-APK: `app/build/outputs/apk/debug/app-debug.apk` (60,914,851 bytes, SHA-256 `ec6c08df511d77f5780e05174f24664db31cafa0b31a9149e7ce3fa37a191f6b`). APK реально подписан и выровнен; **не маркировать его как стандартную Gradle-сборку**. Реальные APK upgrade/data-preservation проверки на устройстве не проводились.
+APK: `app/build/outputs/apk/debug/app-debug.apk` (109,774,916 bytes). Это APK из успешной стандартной Gradle-сборки от 16:51, но он предшествует последним диагностическим log-only правкам и новому UI test. На устройстве update/data-preservation не проверяли.
 
 ### Что осталось проверить
 
-- Запустить Gradle задачи в среде, где Gradle wrapper cache writable и daemon sockets разрешены; не использовать offline APK как замену `assembleDebug`/Lint.
+- После последнего source diff выполнить стандартные `testDebugUnitTest`, `lintDebug` и `assembleDebug` строго последовательно; для них сейчас нет результата на текущем снимке.
 - Выполнить `connectedDebugAndroidTest` на изолированном тестовом устройстве, не стирая приложение пользователя.
 - Установить текущий APK поверх предыдущей версии с совпадающим signer и проверить Room/history migration на копии реального пользовательского состояния.
 - Проверить физический GPS, MapLibre tiles, сохранённый маршрут без сети и автоматическое перестроение на реальной дороге/параллельной дорожке.
+
+### Android diagnostic capture
+
+На тестовом устройстве воспроизводить по одному сценарию и собирать соответствующие сообщения:
+
+```bash
+adb logcat -v threadtime -s FitRunStart FitRunNavigation FitMapLibre FitRoutePlan AndroidRuntime
+```
+
+Теги не должны содержать координаты, адресные запросы, имя пользователя или историю. Для GPS проверить последовательность `UI start pressed` → `onStartCommand` → выбор fused/GPS provider → `Run active`; для проблем tiles/backend записать category и сообщение интерфейса. Перед передачей полного logcat удалить посторонние персональные данные.
+
+Добавлен instrumentation сценарий перехода «Бег → планировщик маршрута → назад» без GPS и запроса маршрута. Он **не компилировался и не исполнялся после добавления** из-за блокировки Gradle daemon/ADB.
 
 ## GPS маршрутизация — новый прогон 2026-11-02
 
