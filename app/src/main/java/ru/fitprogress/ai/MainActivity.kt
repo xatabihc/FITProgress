@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -41,7 +42,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.time.*
 import java.time.format.DateTimeFormatter
@@ -52,6 +55,37 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); enableEdgeToEdge(); setContent { FitProgress() } }
 }
 private val Accent = Color(0xFFB4F667)
+private suspend fun resolveCurrentLocation(context: android.content.Context): android.location.Location? {
+    val fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if(!fine) return null
+    if(com.google.android.gms.common.GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == com.google.android.gms.common.ConnectionResult.SUCCESS) {
+        val result = CompletableDeferred<android.location.Location?>()
+        val token = com.google.android.gms.tasks.CancellationTokenSource()
+        com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+            .getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, token.token)
+            .addOnSuccessListener { result.complete(it) }.addOnFailureListener { result.complete(null) }
+        val fix = withTimeoutOrNull(12_000) { result.await() }?.takeIf { it.hasAccuracy() && it.accuracy <= 120f }
+        if(fix != null) return fix
+    }
+    if(Build.VERSION.SDK_INT >= 30) {
+        val manager = context.getSystemService(android.location.LocationManager::class.java)
+        for(provider in listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)) {
+            if(!manager.isProviderEnabled(provider)) continue
+            val result = CompletableDeferred<android.location.Location?>()
+            try { manager.getCurrentLocation(provider, android.os.CancellationSignal(), context.mainExecutor) { result.complete(it) } }
+            catch(_: SecurityException) { return null }
+            catch(_: IllegalArgumentException) { continue }
+            val fix = withTimeoutOrNull(8_000) { result.await() }
+            if(fix?.hasAccuracy() == true && fix.accuracy <= 120f) return fix
+        }
+    }
+    val manager = context.getSystemService(android.location.LocationManager::class.java)
+    return listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)
+        .filter { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
+        .mapNotNull { runCatching { manager.getLastKnownLocation(it) }.getOrNull() }
+        .filter { System.currentTimeMillis() - it.time in 0..120_000L && it.hasAccuracy() && it.accuracy <= 120f }
+        .maxByOrNull { it.time }
+}
 @Composable fun FitProgress(vm: FitViewModel = viewModel()) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     val accent = when(profile.accent) { "cyan" -> Color(0xFF68D8F6); "orange" -> Color(0xFFFFB45B); else -> Accent }
@@ -79,17 +113,17 @@ private val Accent = Color(0xFFB4F667)
         LaunchedEffect(Unit) { WorkoutTimerService.failure.collect { if(it != null) snackbar.showSnackbar(it) } }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if(route !in listOf("home", "catalog", "calendar", "running", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
+                if(route !in listOf("home", "catalog", "calendar", "running", "running-active", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
                 Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress AI · 3.0", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 IconButton(onClick = { if(route != "settings") nav.navigate("settings") }) { Icon(Icons.Default.Settings, "Настройки") }
             }
-        }, bottomBar = {
+        }, bottomBar = if(route == "running-active") ({}) else ({
             NavigationBar {
-                listOf(Triple("home", "Главная", Icons.Default.Home), Triple("catalog", "Каталог", Icons.Default.FitnessCenter), Triple("calendar", "План", Icons.Default.CalendarMonth), Triple("running", "Бег", Icons.Default.DirectionsRun), Triple("stats", "Прогресс", Icons.Default.Insights)).forEach { (path, name, icon) ->
-                    NavigationBarItem(selected = route == path, onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
+                listOf(Triple("home", stringResource(R.string.nav_home), Icons.Default.Home), Triple("catalog", stringResource(R.string.nav_catalog), Icons.Default.FitnessCenter), Triple("calendar", stringResource(R.string.nav_plan), Icons.Default.CalendarMonth), Triple("running", stringResource(R.string.nav_run), Icons.Default.DirectionsRun), Triple("stats", stringResource(R.string.nav_progress), Icons.Default.Insights)).forEach { (path, name, icon) ->
+                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
                 }
             }
-        }) { padding ->
+        })) { padding ->
             Box(Modifier.padding(padding).fillMaxSize().imePadding()) {
                 NavHost(navController = nav, startDestination = "home") {
                     composable("home") { HomeScreen(vm, { nav.navigate("workout/$it") }, { nav.navigate(it) }) }
@@ -99,7 +133,8 @@ private val Accent = Color(0xFFB4F667)
                     composable("calendar") { CalendarScreen(vm, { nav.navigate("workout/$it") }) }
                     composable("programs") { ProgramsScreen(vm, { nav.navigate("calendar") }, { nav.navigate("plan/$it") }) }
                     composable("plan/{id}") { PlanEditorScreen(vm, it.arguments?.getString("id") ?: "") }
-                    composable("running") { RunningScreen(vm, { nav.navigate("run/$it") }, { nav.navigate("route-builder") }) }
+                    composable("running") { RunningScreen(vm, { nav.navigate("run/$it") }, { nav.navigate("route-builder") }, { nav.navigate("running-active") { launchSingleTop = true } }) }
+                    composable("running-active") { RunningScreen(vm, { nav.navigate("run/$it") }, { nav.navigate("route-builder") }, {}, dedicated = true) }
                     composable("route-builder") { RouteBuilderScreen(vm, { nav.navigate("running") }) }
                     composable("run/{id}") { RunDetail(vm, it.arguments?.getString("id") ?: "") }
                     composable("stats") { StatsScreen(vm, { nav.navigate("analysis") }) }
@@ -118,7 +153,7 @@ private val Accent = Color(0xFFB4F667)
 @Composable fun Title(text: String, subtitle: String = "") { Column { Text(text, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); if(subtitle.isNotBlank()) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium) } }
 @Composable fun Panel(content: @Composable ColumnScope.() -> Unit) { Card(Modifier.fillMaxWidth().animateContentSize(), shape = RoundedCornerShape(24.dp)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content) } }
 @Composable fun Action(text: String, icon: ImageVector = Icons.Default.Add, enabled: Boolean = true, click: () -> Unit) { Button(onClick = click, enabled = enabled, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) { Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text(text) } }
-@Composable fun Metric(label: String, value: String) { Column(Modifier.padding(vertical = 4.dp)) { Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary); Text(label, style = MaterialTheme.typography.labelMedium) } }
+@Composable fun Metric(label: String, value: String, modifier: Modifier = Modifier) { Column(modifier.padding(vertical = 4.dp)) { Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis); Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) } }
 @Composable fun Empty(text: String) { Panel { Icon(Icons.Default.SportsGymnastics, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)); Text(text) } }
 @Composable fun Field(label: String, value: String, change: (String) -> Unit, numeric: Boolean = false, lines: Int = 1, modifier: Modifier = Modifier.fillMaxWidth()) { OutlinedTextField(value = value, onValueChange = change, label = { Text(label) }, modifier = modifier, singleLine = lines == 1, minLines = lines, keyboardOptions = KeyboardOptions(keyboardType = if(numeric) KeyboardType.Decimal else KeyboardType.Text)) }
 @Composable fun Choice(values: List<String>, selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { values.forEach { FilterChip(selected = it == selected, onClick = { onSelect(it) }, label = { Text(it) }) } } }
@@ -151,6 +186,12 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 @Composable fun CatalogScreen(vm: FitViewModel, edit: (String) -> Unit) {
     val exercises by vm.exercises.collectAsStateWithLifecycle(); var query by rememberSaveable { mutableStateOf("") }; var category by rememberSaveable { mutableStateOf("Все") }
     var equipment by rememberSaveable { mutableStateOf("Любое") }; var level by rememberSaveable { mutableStateOf("Любой") }; var type by rememberSaveable { mutableStateOf("Любой тип") }; var origin by rememberSaveable { mutableStateOf("Все источники") }
+    val typeLabels = linkedMapOf(
+        "Любой тип" to stringResource(R.string.exercise_type_any),
+        "strength" to stringResource(R.string.exercise_type_strength),
+        "cardio" to stringResource(R.string.exercise_type_cardio),
+        "stretching" to stringResource(R.string.exercise_type_stretching)
+    )
     val search = remember(exercises) { ExerciseSearchIndex(exercises) }
     val equipmentOptions = remember(exercises) { listOf("Любое") + exercises.map { it.equipment }.distinct().sorted() }
     val levelOptions = listOf("Любой", "Начинающий", "Средний", "Продвинутый", "Не указан источником")
@@ -161,7 +202,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { Choice(listOf("Все") + categories, category) { category = it } }
         item { Choice(equipmentOptions, equipment) { equipment = it } }
         item { Choice(levelOptions, level) { level = it } }
-        item { Choice(listOf("Любой тип", "strength", "cardio", "stretching"), type) { type = it } }
+        item { Choice(typeLabels.values.toList(), typeLabels.getValue(type)) { label -> type = typeLabels.entries.first { it.value == label }.key } }
         item { Choice(listOf("Все источники", "Встроенные", "Мои"), origin) { origin = it } }
         item { Text("Найдено: ${matches.size}", style = MaterialTheme.typography.labelMedium) }
         item { Action("Создать упражнение") { edit("new") } }
@@ -468,22 +509,32 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var startLat by rememberSaveable(active?.id) { mutableStateOf(active?.points?.lastOrNull()?.lat?.toString() ?: "") }; var startLon by rememberSaveable(active?.id) { mutableStateOf(active?.points?.lastOrNull()?.lon?.toString() ?: "") }
     var finishLat by rememberSaveable(active?.id) { mutableStateOf(active?.navigation?.points?.lastOrNull()?.latitude?.toString() ?: "") }; var finishLon by rememberSaveable(active?.id) { mutableStateOf(active?.navigation?.points?.lastOrNull()?.longitude?.toString() ?: "") }
     var viaText by rememberSaveable { mutableStateOf("") }
-    var pick by rememberSaveable { mutableStateOf("start") }
+    var pick by rememberSaveable { mutableStateOf("finish") }
     var loop by rememberSaveable { mutableStateOf(false) }; var targetKm by rememberSaveable { mutableStateOf("5") }
-    var route by remember { mutableStateOf<NavigationRoute?>(null) }; var busy by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }
+    var route by remember { mutableStateOf<NavigationRoute?>(null) }; var alternatives by remember { mutableStateOf<List<NavigationRoute>>(emptyList()) }; var busy by remember { mutableStateOf(false) }; var error by remember { mutableStateOf("") }; var advanced by rememberSaveable { mutableStateOf(false) }
     var address by rememberSaveable { mutableStateOf("") }; var geocodeBusy by remember { mutableStateOf(false) }; var places by remember { mutableStateOf<List<GeocodedPlace>>(emptyList()) }
     var deviceLocation by remember { mutableStateOf(active?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }) }
+    var locating by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val geocoder = remember { NominatimGeocoder() }
     fun readLastLocation() {
-        try {
-            val manager = context.getSystemService(android.location.LocationManager::class.java)
-            val location = listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)
-                .filter { manager.isProviderEnabled(it) }.mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
-                .filter { System.currentTimeMillis() - it.time in 0..(24 * 60 * 60 * 1000L) && it.accuracy <= 200f }.maxByOrNull { it.time }
-            if(location == null) error = "Нет свежей известной позиции. Выйдите на улицу и дождитесь GPS или выберите старт касанием карты."
-            else { deviceLocation = RouteCoordinate(location.latitude, location.longitude); startLat = location.latitude.toString(); startLon = location.longitude.toString(); error = "Старт установлен по последней позиции устройства (${location.accuracy.toInt()} м). Проверьте точность на месте." }
-        } catch(e: SecurityException) { error = "Разрешите геолокацию, чтобы использовать текущую позицию." }
+        if(locating) return
+        locating = true
+        error = "Определяем местоположение…"
+        scope.launch {
+            try {
+                val location = resolveCurrentLocation(context)
+                if(location == null) error = context.getString(R.string.gps_location_unavailable)
+                else {
+                    deviceLocation = RouteCoordinate(location.latitude, location.longitude)
+                    startLat = location.latitude.toString(); startLon = location.longitude.toString()
+                    pick = "finish"
+                    error = "Местоположение определено · точность ${location.accuracy.toInt()} м"
+                }
+            } catch(e: SecurityException) { error = "Разрешите доступ к точной геопозиции в настройках Android." }
+            catch(e: Exception) { error = e.message ?: context.getString(R.string.gps_location_unavailable) }
+            finally { locating = false }
+        }
     }
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if(result[Manifest.permission.ACCESS_FINE_LOCATION] == true) readLastLocation() else error = "Точная геолокация не разрешена. Выберите старт касанием карты или вручную."
@@ -513,27 +564,38 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     fun coordinate(lat: String, lon: String): RouteCoordinate? = lat.toDoubleOrNull()?.let { a -> lon.toDoubleOrNull()?.let { b -> RouteCoordinate(a, b).takeIf { a in -90.0..90.0 && b in -180.0..180.0 } } }
     val modeValue = RouteMode.valueOf(mode)
     Page {
-        item { Title(if(active == null) "Планировщик маршрута" else "Перестроение маршрута", "OSM-карта · Valhalla backend · ${modeValue.label}") }
+        item { Title(if(active == null) "Построить маршрут" else "Изменить маршрут", "Выберите точки на карте или найдите место") }
         item { Choice(RouteMode.entries.map { it.label }, modeValue.label) { selected -> mode = RouteMode.entries.first { it.label == selected }.name } }
         item { Panel {
-            Text("Нажмите поле, затем коснитесь карты, чтобы выбрать точку. Координаты можно ввести вручную.", style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { pick = "start" }, modifier = Modifier.weight(1f)) { Text("Выбрать старт") }; OutlinedButton(onClick = { pick = "finish" }, modifier = Modifier.weight(1f)) { Text("Выбрать финиш") } }
-            OutlinedButton(onClick = { if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) readLastLocation() else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }, modifier = Modifier.fillMaxWidth()) { Text("Использовать последнюю позицию устройства") }
-            Field("Старт · широта", startLat, { startLat = it }, true)
-            Field("Старт · долгота", startLon, { startLon = it }, true)
-            if(!loop) { Field("Финиш · широта", finishLat, { finishLat = it }, true); Field("Финиш · долгота", finishLon, { finishLon = it }, true) }
-            Field("Найти адрес вручную", address, { address = it; places = emptyList() })
-            OutlinedButton(enabled = !geocodeBusy && address.trim().length >= 3, onClick = { geocodeBusy = true; places = emptyList(); error = ""; scope.launch { try { places = withContext(Dispatchers.IO) { geocoder.search(address) }; if(places.isEmpty()) error = "Адрес не найден. Попробуйте уточнить запрос или выберите точку на карте." } catch(e: Exception) { error = e.message ?: "Сервис поиска адреса недоступен" } finally { geocodeBusy = false } } }, modifier = Modifier.fillMaxWidth()) { Text(if(geocodeBusy) "Ищем адрес…" else "Найти адрес") }
-            places.forEach { place -> TextButton(onClick = { setPoint(pick, place.coordinate); deviceLocation = place.coordinate; places = emptyList(); error = "Точка установлена: ${place.name}" }, modifier = Modifier.fillMaxWidth()) { Text(place.name, maxLines = 3) } }
-            Text("Поиск отправляет только адресный запрос в Nominatim OpenStreetMap. Не вводите личные или конфиденциальные адреса. Запрос выполняется только вручную, без автодополнения; результат кэшируется в сессии.", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = { pick = "via" }, modifier = Modifier.fillMaxWidth()) { Text("Добавить промежуточную точку на карте") }
-            if(viaText.isNotBlank()) Text("Промежуточные точки: $viaText", style = MaterialTheme.typography.bodySmall)
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(loop, { loop = it }); Text("Круговой маршрут на заданную дистанцию") }
-            if(loop) Field("Дистанция, км (1–50)", targetKm, { targetKm = it }, true)
+            val start = coordinate(startLat, startLon)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.MyLocation, null, tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f)) { Text("Старт", style = MaterialTheme.typography.labelLarge); Text(if(start == null) "Определите своё местоположение" else "Моё местоположение", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                IconButton(enabled = !locating, onClick = { if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) readLastLocation() else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }) { if(locating) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) else Icon(Icons.Default.MyLocation, stringResource(R.string.gps_search_location)) }
+            }
+            OutlinedButton(onClick = { pick = "start" }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Выбрать старт касанием карты") }
+            if(!loop) {
+                OutlinedButton(onClick = { pick = "finish" }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Icon(Icons.Default.Place, null); Spacer(Modifier.width(8.dp)); Text(if(coordinate(finishLat, finishLon) == null) stringResource(R.string.gps_pick_finish) else "Финиш выбран") }
+                Field(stringResource(R.string.gps_search_place), address, { address = it; places = emptyList() })
+                OutlinedButton(enabled = !geocodeBusy && address.trim().length >= 3, onClick = { pick = "finish"; geocodeBusy = true; places = emptyList(); error = ""; scope.launch { try { places = withContext(Dispatchers.IO) { geocoder.search(address) }; if(places.isEmpty()) error = "Место не найдено. Уточните запрос или выберите точку на карте." } catch(e: Exception) { error = e.message ?: "Поиск мест временно недоступен" } finally { geocodeBusy = false } } }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text(if(geocodeBusy) "Ищем…" else stringResource(R.string.gps_search_button)) }
+                places.forEach { place -> TextButton(onClick = { setPoint(pick, place.coordinate); deviceLocation = coordinate(startLat, startLon); places = emptyList(); error = "Финиш выбран: ${place.name}" }, modifier = Modifier.fillMaxWidth()) { Text(place.name, maxLines = 3) } }
+                Text("Поиск передаёт адресный запрос Nominatim OpenStreetMap. Не вводите конфиденциальные адреса. Поиск выполняется только после нажатия; автодополнения нет.", style = MaterialTheme.typography.bodySmall)
+            }
+            OutlinedButton(onClick = { pick = "via" }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Icon(Icons.Default.AddLocationAlt, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.gps_pick_via)) }
+            if(viaText.isNotBlank()) Text("Промежуточных точек: ${viaText.split(';').count { it.isNotBlank() }}", style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(loop, { loop = it }); Text(stringResource(R.string.gps_loop_route)) }
+            if(loop) Field(stringResource(R.string.gps_target_km), targetKm, { targetKm = it }, true)
+            TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.gps_advanced)) }
+            if(advanced) {
+                Text(stringResource(R.string.gps_advanced_coordinates), style = MaterialTheme.typography.labelLarge)
+                Field(stringResource(R.string.gps_start_lat), startLat, { startLat = it }, true); Field(stringResource(R.string.gps_start_lon), startLon, { startLon = it }, true)
+                if(!loop) { Field(stringResource(R.string.gps_finish_lat), finishLat, { finishLat = it }, true); Field(stringResource(R.string.gps_finish_lon), finishLon, { finishLon = it }, true) }
+            }
         } }
-        item { MapPanel(emptyList(), plannedRoute = route, selectionEnabled = true, markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)), currentLocation = deviceLocation ?: coordinate(startLat, startLon), onMapTap = { setPoint(pick, it) }) }
+        item { Text(if(pick == "via") "Нажмите на карте, чтобы добавить промежуточную точку" else if(pick == "start") "Выберите старт на карте" else stringResource(R.string.gps_choose_finish_hint), style = MaterialTheme.typography.bodySmall) }
+        item { MapPanel(emptyList(), plannedRoute = route, selectionEnabled = true, markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)), currentLocation = deviceLocation ?: coordinate(startLat, startLon), mapHeight = 360.dp, onMapTap = { point -> setPoint(pick, point); if(pick == "finish") error = "Финиш установлен на карте" else if(pick == "via") error = "Промежуточная точка добавлена" }) }
         item { Action(if(busy) "Строим по дорожной сети…" else "Построить маршрут", Icons.Default.Route, enabled = !busy) {
-            error = ""; route = null
+            error = ""; route = null; alternatives = emptyList()
             val start = coordinate(startLat, startLon)
             val finish = coordinate(finishLat, finishLon)
             val via = viaText.split(';').filter { it.isNotBlank() }.mapNotNull { token -> token.split(',').takeIf { it.size == 2 }?.let { coordinate(it[0].trim(), it[1].trim()) } }
@@ -543,8 +605,8 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 scope.launch {
                     try {
                         val backend = withContext(Dispatchers.IO) { ValhallaRoutingBackend(profile.routingBackendUrl) }
-                        val built = if(loop) backend.loop(start, modeValue, (targetKm.toDoubleOrNull()?.times(1000) ?: 0.0)) else backend.route(RouteRequest(listOf(start) + via + requireNotNull(finish), modeValue, alternates = if(via.isEmpty()) 2 else 0)).firstOrNull() ?: throw RoutingException("Сервис не вернул дорожный маршрут", "no_route")
-                        route = built
+                        val built = if(loop) listOf(backend.loop(start, modeValue, (targetKm.toDoubleOrNull()?.times(1000) ?: 0.0))) else backend.route(RouteRequest(listOf(start) + via + requireNotNull(finish), modeValue, alternates = if(via.isEmpty()) 2 else 0))
+                        alternatives = built; route = built.firstOrNull() ?: throw RoutingException("Сервис не вернул дорожный маршрут", "no_route")
                     } catch(e: Exception) {
                         val category = (e as? RoutingException)?.category ?: e.javaClass.simpleName
                         android.util.Log.w("FitRoutePlan", "Route planning failed category=$category")
@@ -554,6 +616,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 }
             }
         } }
+        if(alternatives.size > 1) item {
+            val labels = alternatives.mapIndexed { index, option -> "Вариант ${index + 1} · %.1f км".format(option.distanceMeters / 1000) }
+            val selectedIndex = alternatives.indexOfFirst { it.id == route?.id }.coerceAtLeast(0)
+            Panel { Text("Маршруты по дорожной сети", style = MaterialTheme.typography.titleMedium); Choice(labels, labels[selectedIndex]) { label -> alternatives.getOrNull(labels.indexOf(label))?.let { route = it } } }
+        }
         if(error.isNotBlank()) item { Text(error, color = MaterialTheme.colorScheme.error) }
         route?.let { selected ->
             item { Panel { Text("Маршрут · ${selected.name}", style = MaterialTheme.typography.titleLarge); Metric("Длина", "%.2f км".format(selected.distanceMeters / 1000)); if(selected.instructions.isNotEmpty()) { Text("Сопровождение по маршруту"); selected.instructions.take(12).forEach { Text("${it.text} · через %.0f м".format(it.distanceAlongMeters)) } } } }
@@ -572,13 +639,36 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     }
 }
 
-@Composable fun RunningScreen(vm: FitViewModel, detail: (String) -> Unit, routeBuilder: () -> Unit) {
+@Composable fun RunningScreen(vm: FitViewModel, detail: (String) -> Unit, routeBuilder: () -> Unit, activeScreen: () -> Unit = {}, dedicated: Boolean = false) {
     val runs by vm.runs.collectAsStateWithLifecycle(); val current = runs.firstOrNull { it.status != "done" && !it.demo }; val tick = clockNow(); val context = LocalContext.current
     val stamp = remember(tick) { AndroidClock.read(context) }
     val launch by vm.runLaunch.collectAsStateWithLifecycle()
-    val signal by RunService.signal.collectAsStateWithLifecycle(); var finish by remember { mutableStateOf(false) }; var manual by rememberSaveable { mutableStateOf(false) }; var followGps by rememberSaveable { mutableStateOf(true) }
+    val signal by RunService.signal.collectAsStateWithLifecycle(); var finish by remember { mutableStateOf(false) }; var manual by rememberSaveable { mutableStateOf(false) }; var followGps by rememberSaveable { mutableStateOf(true) }; var controlsLocked by rememberSaveable { mutableStateOf(false) }; var activeAutoOpened by rememberSaveable { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.runPermissionResult() }
-    Page {
+    LaunchedEffect(launch.phase) { if(!dedicated && launch.phase == RunLaunchPhase.ACTIVE && !activeAutoOpened) { activeAutoOpened = true; activeScreen() } }
+    LaunchedEffect(current?.id, current?.status, dedicated) { if(dedicated && current?.status == "done") detail(current.id) }
+    if(dedicated) {
+        Page {
+            item { Title("Пробежка", "Карта, темп и секундомер") }
+            item { MapPanel(current?.points.orEmpty(), plannedRoute = current?.navigation, currentLocation = current?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }, followUser = current?.status == "active" && followGps, mapHeight = 410.dp) }
+            item { if(current?.points.isNullOrEmpty()) { Text(stringResource(R.string.gps_searching), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary); Text(stringResource(R.string.gps_waiting_open_sky), style = MaterialTheme.typography.bodySmall) } else Text(signal, style = MaterialTheme.typography.bodySmall) }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_distance), "%.2f км".format((current?.distance ?: 0.0) / 1000), Modifier.weight(1f)); Metric(stringResource(R.string.gps_duration), formatTime(current?.let { RunTimers.elapsed(it, stamp) } ?: 0), Modifier.weight(1f)) } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_current_pace), current?.takeIf { it.points.size > 1 }?.let { formatPace(Gps.currentPaceAt(it.points, stamp)) } ?: "—", Modifier.weight(1f)); Metric(stringResource(R.string.gps_average_pace), current?.let { formatPace(Gps.pace(it.distance, RunTimers.elapsed(it, stamp))) } ?: "—", Modifier.weight(1f)) } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_speed), "%.1f км/ч".format(current?.let { Gps.speed(it.distance, RunTimers.elapsed(it, stamp)) } ?: 0.0), Modifier.weight(1f)); Metric(stringResource(R.string.gps_accuracy), current?.points?.lastOrNull()?.let { "±${it.accuracy.toInt()} м" } ?: "—", Modifier.weight(1f)) } }
+            current?.navigation?.let { route -> item { val progress = current.points.lastOrNull()?.let { RouteMath.progress(route, RouteCoordinate(it.lat, it.lon)) }; Panel { Text("Осталось", style = MaterialTheme.typography.labelLarge); Text(progress?.let { "%.2f км".format(it.remainingMeters / 1000) } ?: stringResource(R.string.gps_searching), style = MaterialTheme.typography.headlineMedium); if(progress?.offRoute == true) Text("Отклонение от маршрута · выполняется проверка GPS", color = MaterialTheme.colorScheme.error) } } }
+            item { OutlinedButton(onClick = { controlsLocked = !controlsLocked }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(stringResource(if(controlsLocked) R.string.gps_unlock_controls else R.string.gps_lock_controls)) } }
+            if(controlsLocked) item { Text(stringResource(R.string.gps_locked), color = MaterialTheme.colorScheme.primary) }
+            if(!controlsLocked) item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    if(current?.status == "active") Button(onClick = { runCatching { RunService.command(context, RunService.PAUSE) }.onFailure { vm.notify(it.message ?: "Не удалось поставить пробежку на паузу") } }, modifier = Modifier.weight(1f).heightIn(min = 60.dp)) { Icon(Icons.Default.Pause, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.gps_pause_run)) }
+                    else Button(onClick = { val ask = { permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }; vm.requestRunStart(ask) }, enabled = !launch.pending, modifier = Modifier.weight(1f).heightIn(min = 60.dp)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.gps_continue_run)) }
+                    OutlinedButton(onClick = { finish = true }, enabled = current != null, modifier = Modifier.weight(1f).heightIn(min = 60.dp)) { Icon(Icons.Default.Stop, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.gps_finish_run)) }
+                }
+            }
+            if(launch.phase == RunLaunchPhase.ERROR) item { Text(launch.error?.message.orEmpty(), color = MaterialTheme.colorScheme.error) }
+            if(current?.navigation == null) item { OutlinedButton(onClick = routeBuilder, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(stringResource(R.string.gps_route_build)) } }
+        }
+    } else Page {
         item { Title(if(current?.status == "active") "Пробежка идёт" else "Бег в твоём ритме", "Реальный GPS · запись при заблокированном экране") }
         item { Action(if(current?.navigation == null) "Построить маршрут" else "Перестроить маршрут", Icons.Default.Map) { routeBuilder() } }
         item { Panel {

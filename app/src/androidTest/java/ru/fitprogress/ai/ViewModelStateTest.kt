@@ -2,6 +2,7 @@ package ru.fitprogress.ai
 
 import androidx.room.Room
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -23,7 +24,13 @@ class ViewModelStateTest {
         check(app.isolatedTestStorage) { "Use FitTestRunner; production storage is forbidden" }
         db = Room.inMemoryDatabaseBuilder(app, FitDatabase::class.java).build(); repo = Repository(db, app); newViewModel()
     }
-    @After fun close() { onMain { store.clear() }; db.close() }
+    private fun clearViewModelAndAwaitReaders() {
+        val scope = vm.viewModelScope.coroutineContext[Job]
+        onMain { store.clear() }
+        // Cancellation is asynchronous: await every Room flow before closing its database.
+        runBlocking { withTimeout(10000) { scope?.join() } }
+    }
+    @After fun close() { clearViewModelAndAwaitReaders(); db.close() }
     @Test fun completeAndFinishCannotLoseTheQueuedSet() = runBlocking {
         val w = Workout(items = listOf(Training.item(Catalog.exercises.first())))
         repo.save(w); val now = AndroidClock.read(app); repo.updateWorkout(w.id) { SessionTimers.resume(it, now) }
@@ -40,7 +47,7 @@ class ViewModelStateTest {
         onMain { saved = vm.completeSet(w, w.items[0].id, w.items[0].sets[0].id, w.items[0].sets[0]); paused = vm.pause(w) }
         saved.join(); paused.join()
         val before = repo.workouts.first().single(); assertTrue(before.restRemaining > 0)
-        onMain { store.clear(); store = ViewModelStore() }; newViewModel()
+        clearViewModelAndAwaitReaders(); store = ViewModelStore(); newViewModel()
         val restored = withTimeout(10000) { vm.workouts.first { it.any { row -> row.id == w.id } }.single() }
         assertEquals(before, restored); assertEquals("paused", restored.status); assertEquals(1, restored.completedSets())
     }

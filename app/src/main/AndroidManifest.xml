@@ -9,7 +9,7 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
-    <application android:name=".FitApp" android:label="FitProgress AI" android:theme="@style/AppTheme" android:icon="@drawable/ic_logo" android:allowBackup="false" android:supportsRtl="true">
+    <application android:name=".FitApp" android:label="FitProgress AI" android:theme="@style/AppTheme" android:icon="@drawable/ic_logo" android:allowBackup="false" android:supportsRtl="true" android:localeConfig="@xml/locales_config">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>

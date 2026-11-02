@@ -32,6 +32,15 @@ class GpsServiceStartTest {
             val run = requireNotNull(app.repository.currentRun()); assertEquals("active", run.status)
             val before = RunTimers.elapsed(run, AndroidClock.read(app)); delay(1200)
             assertTrue(RunTimers.elapsed(run, AndroidClock.read(app)) >= before + 1000)
+            scenario.onActivity { RunService.command(it, RunService.PAUSE) }
+            val paused = withTimeout(10000) { app.repository.runs.first { rows -> rows.any { it.id == run.id && it.status == "paused" } }.single { it.id == run.id } }
+            val pausedClock = RunTimers.elapsed(paused, AndroidClock.read(app))
+            delay(300)
+            assertEquals(pausedClock, RunTimers.elapsed(paused, AndroidClock.read(app)))
+            scenario.onActivity { RunService.command(it, RunService.RESUME) }
+            val resumed = withTimeout(10000) { app.repository.runs.first { rows -> rows.any { it.id == run.id && it.status == "active" } }.single { it.id == run.id } }
+            assertEquals(run.id, resumed.id)
+            assertTrue(resumed.segment >= paused.segment)
             assertTrue(app.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == 42 && it.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 })
         } finally {
             scenario.onActivity { RunService.command(it, RunService.FINISH) }

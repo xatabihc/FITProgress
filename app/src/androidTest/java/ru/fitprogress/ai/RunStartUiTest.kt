@@ -16,7 +16,7 @@ class RunStartUiTest {
             app.repository.currentRun()?.let { r -> app.repository.updateRun(r.id) { RunTimers.finish(it, AndroidClock.read(app)) } }
         }
         RunService.launch.idle()
-        ui.onNodeWithContentDescription("Бег").performClick()
+        ui.onNodeWithContentDescription("Бег", useUnmergedTree = true).performClick()
     }
     @After fun resetLaunchOnly() { RunService.launch.idle() }
     @Test fun serviceFailureShowsErrorAndRetryNextToStartControl() {

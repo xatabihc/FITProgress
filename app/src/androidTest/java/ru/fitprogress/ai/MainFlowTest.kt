@@ -29,7 +29,7 @@ class MainFlowTest {
     }
     private fun scroll(text: String) { ui.onNodeWithTag("page").performScrollToNode(hasText(text, substring = false)) }
     @Test fun createAndRenameExercise() {
-        ui.onNodeWithContentDescription("Каталог").performClick()
+        ui.onNodeWithContentDescription(ui.activity.getString(R.string.nav_catalog), useUnmergedTree = true).performClick()
         ui.onNodeWithText("Создать упражнение").performClick()
         ui.onNodeWithText("Название").performTextInput("Мой присед")
         scroll("Сохранить упражнение"); ui.onNodeWithText("Сохранить упражнение").performClick(); ui.waitForIdle()
@@ -41,7 +41,7 @@ class MainFlowTest {
     @Test fun createExecuteSaveAndReopenWorkout() {
         scroll("Создать тренировку"); ui.onNodeWithText("Создать тренировку").performClick(); ui.waitForIdle()
         scroll("Добавить упражнение"); ui.onNodeWithText("Добавить упражнение").performClick()
-        ui.onNodeWithText("Отжимания").performClick()
+        ui.onAllNodesWithText("Отжимания")[0].performClick()
         scroll("Начать тренировку"); ui.onNodeWithText("Начать тренировку").performClick(); ui.waitForIdle()
         scroll("Текущий подход: 1")
         ui.onAllNodesWithContentDescription("Отметить подход выполненным")[0].performClick()
@@ -53,16 +53,16 @@ class MainFlowTest {
         scroll("Тренировка сохранена"); ui.onNodeWithText("Тренировка сохранена").assertIsDisplayed()
     }
     @Test fun emptyGpsScreenDoesNotGenerateDistance() {
-        ui.onNodeWithContentDescription("Бег").performClick()
+        ui.onNodeWithContentDescription("Бег", useUnmergedTree = true).performClick()
         ui.onNode(hasText("0.00 км") or hasText("0,00 км")).assertIsDisplayed()
         ui.onNodeWithText("Начать пробежку").assertExists()
     }
     @Test fun runRouteBuilderCanOpenAndReturnWithoutGpsPermission() {
-        ui.onNodeWithContentDescription("Бег").performClick()
+        ui.onNodeWithContentDescription("Бег", useUnmergedTree = true).performClick()
         ui.onNodeWithText("Бег в твоём ритме").assertIsDisplayed()
         ui.onNodeWithTag("page").performScrollToNode(hasText("Построить маршрут"))
         ui.onNodeWithText("Построить маршрут").performClick()
-        ui.onNodeWithText("Планировщик маршрута").assertIsDisplayed()
+        ui.onNodeWithText("Выберите точки на карте или найдите место").assertIsDisplayed()
         ui.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         ui.waitForIdle()
         ui.onNodeWithText("Бег в твоём ритме").assertIsDisplayed()
@@ -71,11 +71,11 @@ class MainFlowTest {
         scroll("Программы"); ui.onNodeWithText("Программы").performClick()
         scroll("Создать свою программу"); ui.onNodeWithText("Создать свою программу").performClick(); ui.waitForIdle()
         scroll("Добавить занятие / восстановление"); ui.onNodeWithText("Добавить занятие / восстановление").performClick()
-        ui.onNodeWithText("Добавить упражнение").performClick(); ui.onNodeWithText("Отжимания").performClick()
+        ui.onNodeWithText("Добавить упражнение").performClick(); ui.onAllNodesWithText("Отжимания")[0].performClick()
         ui.onNodeWithText("Сохранить день").performClick(); ui.waitForIdle()
         scroll("Просмотреть и применить будущий план"); ui.onNodeWithText("Просмотреть и применить будущий план").performClick()
         ui.onNodeWithText("Подтвердить изменения").performClick(); ui.waitForIdle()
-        ui.onNodeWithContentDescription("План").performClick(); ui.waitForIdle()
+        ui.onNodeWithContentDescription("План", useUnmergedTree = true).performClick(); ui.waitForIdle()
         scroll("Тренировка"); ui.onNodeWithText("Тренировка").assertIsDisplayed()
     }
 
@@ -87,7 +87,7 @@ class MainFlowTest {
         scroll("Три тренировки"); ui.onNodeWithText("Три тренировки").assertIsDisplayed()
         ui.activityRule.scenario.recreate(); ui.waitForIdle()
         scroll("Три тренировки"); ui.onNodeWithText("Три тренировки").assertIsDisplayed()
-        ui.onNodeWithContentDescription("Главная").performClick(); ui.waitForIdle()
+        ui.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; ui.waitForIdle()
         scroll("Дневник самочувствия"); ui.onNodeWithText("Дневник самочувствия").performClick()
         ui.onNodeWithText("Заполнить дневник").performClick(); ui.onNodeWithText("Сохранить дневник").performClick(); ui.waitForIdle()
         scroll("Изменить запись"); ui.onNodeWithText("Изменить запись").assertIsDisplayed()

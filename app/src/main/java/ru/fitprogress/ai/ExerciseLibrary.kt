@@ -107,7 +107,7 @@ object OpenExerciseLibrary {
                 val originalGear = text(row, "equipment")
                 val englishMuscles = primary + array(row, "secondaryMuscles")
                 val guide = russianGuides[sourceId]
-                ExerciseSourceMetadata.put(id, ExerciseSourceInfo(level(text(row, "level")), text(row, "mechanic").ifBlank { text(row, "category") }, english, listOf(sourceId.replace('_', ' '), sourceId.replace('_', ' ').replace('-', ' '), english, originalGear) + englishMuscles,
+                ExerciseSourceMetadata.put(id, ExerciseSourceInfo(level(text(row, "level")), text(row, "category"), english, listOf(sourceId.replace('_', ' '), sourceId.replace('_', ' ').replace('-', ' '), english, originalGear) + englishMuscles,
                     primaryMuscles = primaryRu.joinToString(", "), secondaryMuscles = secondaryRu.joinToString(", "), commonErrors = guide?.errors.orEmpty(), alternatives = guide?.alternatives.orEmpty(), localizedGuide = guide != null))
                 Exercise(id = id, name = russianNames[sourceId] ?: english, category = category,
                     technique = guide?.technique ?: instructionList.mapIndexed { i, step -> "${i + 1}. $step" }.joinToString("\n"),

@@ -120,6 +120,22 @@ python3 tools/package-android-tests.py
 
 # Проверки FitProgressAI 2.1-dev
 
+## GPS UX и сборка — 2026-11-02 (последний прогон)
+
+Команда выполнена строго последовательно: `./gradlew --no-parallel --max-workers=2 testDebugUnitTest lintDebug assembleDebug`.
+
+| Проверка | Результат |
+|---|---|
+| Kotlin/Compose compile | PASS |
+| `testDebugUnitTest` | **146 tests, 0 failures, 0 errors, 0 skipped** |
+| `lintDebug` | PASS, **0 errors, 58 warnings, 1 informational** |
+| `assembleDebug` | PASS; APK 112,195,022 bytes, SHA-256 `32a13b7b1d725cdc8265569bfb874569041d63dc9cf5dd92a9ff9b521654474f`, `ru.fitprogress.ai`, versionCode 6 / `3.0-dev` |
+| `apksigner verify --print-certs` | PASS; signer SHA-256 `2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef`, совпадает с ранее проверенной debug-подписью |
+| `git diff --check` | PASS |
+| Подключённый Android | НЕ ПРОВЕРЕНО: ADB daemon заблокирован (`could not install *smartsocket* listener: Operation not permitted`) |
+
+Новые изменения кода покрыты компиляцией и общим unit-набором; отдельные тесты физического GPS, выбора карты касанием и Compose-перехода на новом active screen в этом запуске не добавлялись. APK подписан прежним debug-сертификатом, но успешное обновление установленной копии и сохранность данных на устройстве не подтверждены. Тестовый APK `androidTest` здесь не пересобирался и не исполнялся.
+
 ## GPS quality pass and build environment — 2026-11-02
 
 ### Реально выполнено

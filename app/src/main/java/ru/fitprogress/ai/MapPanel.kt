@@ -6,6 +6,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -29,7 +31,7 @@ import org.maplibre.geojson.*
 @Composable fun MapPanel(
     points: List<GeoPoint>, plannedRoute: NavigationRoute? = null, selectionEnabled: Boolean = false,
     markers: List<RouteCoordinate> = emptyList(), currentLocation: RouteCoordinate? = points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) },
-    followUser: Boolean = false,
+    followUser: Boolean = false, mapHeight: Dp = 300.dp,
     onMapTap: (RouteCoordinate) -> Unit = {}
 ) {
     val context = LocalContext.current; val owner = LocalLifecycleOwner.current
@@ -75,15 +77,17 @@ import org.maplibre.geojson.*
     LaunchedEffect(points.size, points.lastOrNull()?.lat, points.lastOrNull()?.lon, points.lastOrNull()?.segment, map, styleLoaded) {
         val m = map ?: return@LaunchedEffect
         if(styleLoaded) {
-            val features = points.groupBy { it.segment }.values.filter { it.size >= 2 }.map { segment -> Feature.fromGeometry(LineString.fromLngLats(segment.map { Point.fromLngLat(it.lon, it.lat) })) }
+            val displayPoints = sampleGpsTrack(points)
+            val features = displayPoints.groupBy { it.segment }.values.filter { it.size >= 2 }.map { segment -> Feature.fromGeometry(LineString.fromLngLats(segment.map { Point.fromLngLat(it.lon, it.lat) })) }
             m.style?.getSourceAs<GeoJsonSource>("recorded")?.setGeoJson(FeatureCollection.fromFeatures(features))
         }
     }
-    LaunchedEffect(plannedRoute?.id, plannedRoute?.points?.hashCode(), map, styleLoaded) {
+    LaunchedEffect(plannedRoute?.id, plannedRoute?.points?.size, map, styleLoaded) {
         val m = map ?: return@LaunchedEffect
         if(styleLoaded) {
             val route = plannedRoute
-            val features = route?.points?.groupBy { it.segment }?.values?.filter { it.size >= 2 }?.map { group -> Feature.fromGeometry(LineString.fromLngLats(group.map { Point.fromLngLat(it.longitude, it.latitude) })) }.orEmpty()
+            val displayRoute = route?.points?.let(::sampleRoute)
+            val features = displayRoute?.groupBy { it.segment }?.values?.filter { it.size >= 2 }?.map { group -> Feature.fromGeometry(LineString.fromLngLats(group.map { Point.fromLngLat(it.longitude, it.latitude) })) }.orEmpty()
             m.style?.getSourceAs<GeoJsonSource>("planned")?.setGeoJson(FeatureCollection.fromFeatures(features))
             if(route != null && route.points.isNotEmpty()) runCatching { m.animateCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.Builder().includes(route.points.map { LatLng(it.latitude, it.longitude) }).build(), 48)) }
         }
@@ -103,13 +107,24 @@ import org.maplibre.geojson.*
         if(followUser && styleLoaded) m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 17.0), 450)
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxWidth().height(300.dp))
+        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxWidth().height(mapHeight))
         Text("© OpenStreetMap contributors · карты требуют сети или действительного кэша", style = MaterialTheme.typography.labelSmall)
         if(selectionEnabled) Text("Нажмите на карту, чтобы выбрать следующую точку маршрута.", style = MaterialTheme.typography.bodySmall)
         if(error.isNotBlank()) Text(error, style = MaterialTheme.typography.bodySmall)
         if(points.isEmpty() && plannedRoute == null) Text(if(currentLocation == null) "Ожидается позиция GPS или выбор точки на карте." else "Синяя точка — последняя позиция устройства.")
         if(plannedRoute != null) Text("Маршрут по дорожной сети · %.2f км · %s".format(plannedRoute.distanceMeters / 1000, RouteMode.valueOf(plannedRoute.mode).label), style = MaterialTheme.typography.labelMedium)
-        if(plannedRoute != null) { Text("Предпросмотр маршрута доступен без карты и сети", style = MaterialTheme.typography.labelSmall); RouteFallback(plannedRoute.points.map { GeoPoint(it.latitude, it.longitude, 0f, plannedRoute.createdAt, it.segment) }) }
+        if(plannedRoute != null) { Text(stringResource(R.string.gps_map_offline_preview), style = MaterialTheme.typography.labelSmall); RouteFallback(sampleRoute(plannedRoute.points).map { GeoPoint(it.latitude, it.longitude, 0f, plannedRoute.createdAt, it.segment) }) }
         if(points.isNotEmpty()) { Text("Фактический GPS-трек", style = MaterialTheme.typography.labelMedium); RouteFallback(points) }
     }
+}
+
+private fun sampleGpsTrack(points: List<GeoPoint>, maximum: Int = 2400): List<GeoPoint> {
+    if(points.size <= maximum) return points
+    val step = (points.size / maximum).coerceAtLeast(1)
+    return points.filterIndexed { index, point -> index % step == 0 || index == points.lastIndex || points.getOrNull(index - 1)?.segment != point.segment || points.getOrNull(index + 1)?.segment != point.segment }
+}
+private fun sampleRoute(points: List<RouteCoordinate>, maximum: Int = 2400): List<RouteCoordinate> {
+    if(points.size <= maximum) return points
+    val step = (points.size / maximum).coerceAtLeast(1)
+    return points.filterIndexed { index, point -> index % step == 0 || index == points.lastIndex || points.getOrNull(index - 1)?.segment != point.segment || points.getOrNull(index + 1)?.segment != point.segment }
 }

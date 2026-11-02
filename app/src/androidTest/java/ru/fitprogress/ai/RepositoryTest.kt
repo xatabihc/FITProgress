@@ -16,10 +16,11 @@ class RepositoryTest {
     @Before fun setup() { val context = InstrumentationRegistry.getInstrumentation().targetContext; db = Room.inMemoryDatabaseBuilder(context, FitDatabase::class.java).build(); repo = Repository(db, context) }
     @After fun cleanup() { db.close() }
     @Test fun exerciseCreateEditDelete() = runBlocking {
+        val baseline = repo.exercises.first().map { it.id }.toSet()
         val e = Exercise(name = "Тестовое", category = "Грудь")
         repo.save(e); assertEquals("Тестовое", repo.exercises.first().first { it.id == e.id }.name)
         repo.save(e.copy(name = "Новое название")); assertEquals("Новое название", repo.exercises.first().first { it.id == e.id }.name)
-        repo.deleteExercise(e.id); assertFalse(repo.exercises.first().any { it.id == e.id }); assertEquals(Catalog.exercises.size, repo.exercises.first().size)
+        repo.deleteExercise(e.id); assertFalse(repo.exercises.first().any { it.id == e.id }); assertEquals(baseline, repo.exercises.first().map { it.id }.toSet())
     }
     @Test fun resultsSurviveExerciseDeletionAndCannotBeOverwritten() = runBlocking {
         val e = Exercise(name = "Сохранённое"); repo.save(e)
@@ -130,8 +131,13 @@ class RepositoryTest {
     }
 
     @Test fun favoriteRoutePersistsInExistingPersonalRecordsWithoutChangingWorkoutHistory() = runBlocking {
-        val workout = Workout(name = "Историческая тренировка", status = "done", ended = System.currentTimeMillis())
-        repo.save(workout)
+        val planned = Workout(name = "Историческая тренировка")
+        repo.save(planned)
+        val clock = AndroidClock.read(InstrumentationRegistry.getInstrumentation().targetContext)
+        repo.updateWorkout(planned.id) { SessionTimers.resume(it, clock) }
+        repo.updateWorkout(planned.id) { SessionTimers.finish(it, clock) }
+        val workout = repo.workouts.first().single()
+        assertEquals("done", workout.status)
         val favorite = NavigationRoute(name = "Парк", mode = RouteMode.WALK.name, points = listOf(RouteCoordinate(55.0, 37.0), RouteCoordinate(55.001, 37.0)), distanceMeters = 111.2)
         repo.saveRoute(favorite)
         assertEquals(favorite, repo.savedRoutes.first().single())

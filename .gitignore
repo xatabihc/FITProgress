@@ -15,3 +15,6 @@ local.properties
 # Local Python verification cache
 __pycache__/
 *.py[cod]
+
+# Private local QA evidence
+qa-reports/
