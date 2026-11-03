@@ -2,6 +2,7 @@ package ru.fitprogress.ai
 
 import android.util.Log
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import org.maplibre.geojson.*
     val context = LocalContext.current; val owner = LocalLifecycleOwner.current
     var error by remember { mutableStateOf("") }; var map by remember { mutableStateOf<MapLibreMap?>(null) }; var styleLoaded by remember { mutableStateOf(false) }
     val selection = rememberUpdatedState(selectionEnabled); val tap = rememberUpdatedState(onMapTap)
+    var mapReady by remember { mutableStateOf(false) }
     val mapView = remember {
         MapLibre.getInstance(context)
         HttpRequestUtil.setOkHttpClient(OkHttpClient.Builder().addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("User-Agent", "FitProgressAI/3.0 (+https://github.com/xatabihc/train)").build()) }.build())
@@ -58,7 +60,13 @@ import org.maplibre.geojson.*
         }
         mapView.getMapAsync { m ->
             map = m
-            m.addOnMapClickListener { point -> if(selection.value) { tap.value(RouteCoordinate(point.latitude, point.longitude)); true } else false }
+            mapReady = true
+            m.addOnMapClickListener { point ->
+                if(selection.value) {
+                    tap.value(RouteCoordinate(point.latitude, point.longitude))
+                    true
+                } else false
+            }
             m.setStyle(Style.Builder().fromJson("""{"version":8,"sources":{"osm":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"attribution":"© OpenStreetMap contributors","maxzoom":19}},"layers":[{"id":"background","type":"background","paint":{"background-color":"#202820"}},{"id":"osm","type":"raster","source":"osm"}]}""")) { style ->
                 Log.i("FitMapLibre", "Map style loaded; route overlay sources initialized")
                 style.addSource(GeoJsonSource("recorded", FeatureCollection.fromFeatures(emptyArray<Feature>())))
@@ -107,9 +115,24 @@ import org.maplibre.geojson.*
         if(followUser && styleLoaded) m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 17.0), 450)
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxWidth().height(mapHeight))
+        Box(Modifier.fillMaxWidth().height(mapHeight)) {
+            AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+            if(selectionEnabled) {
+                Text("+", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineLarge)
+            }
+        }
+        if(selectionEnabled) {
+            Button(
+                onClick = {
+                    val center = map?.cameraPosition?.target
+                    if(center != null && mapReady) tap.value(RouteCoordinate(center.latitude, center.longitude))
+                },
+                enabled = mapReady,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+            ) { Text("Выбрать точку в центре карты") }
+        }
         Text("© OpenStreetMap contributors · карты требуют сети или действительного кэша", style = MaterialTheme.typography.labelSmall)
-        if(selectionEnabled) Text("Нажмите на карту, чтобы выбрать следующую точку маршрута.", style = MaterialTheme.typography.bodySmall)
+        if(selectionEnabled) Text("Коснитесь карты или переместите её под прицел «+» и нажмите «Выбрать точку в центре карты».", style = MaterialTheme.typography.bodySmall)
         if(error.isNotBlank()) Text(error, style = MaterialTheme.typography.bodySmall)
         if(points.isEmpty() && plannedRoute == null) Text(if(currentLocation == null) "Ожидается позиция GPS или выбор точки на карте." else "Синяя точка — последняя позиция устройства.")
         if(plannedRoute != null) Text("Маршрут по дорожной сети · %.2f км · %s".format(plannedRoute.distanceMeters / 1000, RouteMode.valueOf(plannedRoute.mode).label), style = MaterialTheme.typography.labelMedium)

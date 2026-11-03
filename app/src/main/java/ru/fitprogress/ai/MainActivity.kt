@@ -592,8 +592,56 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 if(!loop) { Field(stringResource(R.string.gps_finish_lat), finishLat, { finishLat = it }, true); Field(stringResource(R.string.gps_finish_lon), finishLon, { finishLon = it }, true) }
             }
         } }
-        item { Text(if(pick == "via") "Нажмите на карте, чтобы добавить промежуточную точку" else if(pick == "start") "Выберите старт на карте" else stringResource(R.string.gps_choose_finish_hint), style = MaterialTheme.typography.bodySmall) }
-        item { MapPanel(emptyList(), plannedRoute = route, selectionEnabled = true, markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)), currentLocation = deviceLocation ?: coordinate(startLat, startLon), mapHeight = 360.dp, onMapTap = { point -> setPoint(pick, point); if(pick == "finish") error = "Финиш установлен на карте" else if(pick == "via") error = "Промежуточная точка добавлена" }) }
+        item {
+            Panel {
+                Text("Выберите, что установить на карте", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("start" to "Старт", "finish" to "Финиш", "via" to "Точка +").filter { !loop || it.first != "finish" }.forEach { (role, label) ->
+                        OutlinedButton(
+                            onClick = { pick = role; error = "Выбран режим: $label. Коснитесь карты или используйте прицел." },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if(pick == role) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                            )
+                        ) { Text(label) }
+                    }
+                }
+                Text(
+                    when(pick) {
+                        "start" -> "Выбирается СТАРТ"
+                        "via" -> "Добавляется ПРОМЕЖУТОЧНАЯ ТОЧКА"
+                        else -> "Выбирается ФИНИШ"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "Старт: ${if(coordinate(startLat, startLon) != null) "выбран" else "не выбран"} · " +
+                        "Финиш: ${if(coordinate(finishLat, finishLon) != null) "выбран" else "не выбран"} · " +
+                        "Промежуточных: ${viaText.split(';').count { it.isNotBlank() }}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        item {
+            MapPanel(
+                emptyList(), plannedRoute = route, selectionEnabled = true,
+                markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)),
+                currentLocation = deviceLocation ?: coordinate(startLat, startLon), mapHeight = 360.dp,
+                onMapTap = { point ->
+                    val selectedRole = pick
+                    setPoint(selectedRole, point)
+                    if(selectedRole == "start") {
+                        pick = "finish"
+                        error = "Старт установлен. Теперь выберите финиш."
+                    } else if(selectedRole == "finish") {
+                        error = "Финиш установлен. Нажмите «Построить маршрут»."
+                    } else if(viaText.split(';').count { it.isNotBlank() } <= 8) {
+                        error = "Промежуточная точка добавлена."
+                    }
+                }
+            )
+        }
         item { Action(if(busy) "Строим по дорожной сети…" else "Построить маршрут", Icons.Default.Route, enabled = !busy) {
             error = ""; route = null; alternatives = emptyList()
             val start = coordinate(startLat, startLon)
