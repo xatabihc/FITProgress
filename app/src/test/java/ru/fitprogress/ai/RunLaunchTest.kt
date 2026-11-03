@@ -15,6 +15,13 @@ class RunLaunchTest {
     @Test fun fallbackCannotRegisterPlatformGpsTwice() {
         assertFalse(GpsFallbackPolicy.canUsePlatformGps(true, true, true, true))
     }
+    @Test fun runningScreenNeverShowsStaleGpsAccuracyAsCurrent() {
+        val point = GeoPoint(0.0, 0.0, 7f, 100_000, elapsedMs = 1_000, boot = 1)
+        assertEquals("Нет свежего GPS", GpsSignalStatus.accuracyLabel(null, ClockStamp(100_000, 1_000, 1)))
+        assertEquals("±7 м", GpsSignalStatus.accuracyLabel(point, ClockStamp(500_000, 6_000, 1)))
+        assertEquals("Нет свежего GPS", GpsSignalStatus.accuracyLabel(point, ClockStamp(500_000, 25_001, 1)))
+        assertEquals("Нет свежего GPS", GpsSignalStatus.accuracyLabel(point.copy(accuracy = 100f), ClockStamp(100_000, 2_000, 1)))
+    }
     @Test fun successfulLaunchIsAcknowledgedWithoutFirstFix() {
         val c = RunLaunchController(); var starts = 0
         assertTrue(c.request(true)); assertEquals(RunLaunchPhase.STARTING, c.state.value.phase)
