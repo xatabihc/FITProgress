@@ -27,6 +27,17 @@ class ExerciseSearchTest {
         assertEquals("x2", index.filter(category = "Квадрицепсы", equipment = "штанга").single().id)
         assertTrue(index.filter(category = "Грудь", equipment = "штанга").isEmpty())
     }
+    @Test fun localizedTypeLabelsUseStableSourceIdentifiers() {
+        assertEquals("x1", index.filter(type = "Силовые").single().id)
+        assertEquals("x1", index.filter(type = "СИЛОВЫЕ").single().id)
+        assertEquals("x1", index.filter(type = "strength").single().id)
+        assertTrue(index.filter(type = "Растяжка").isEmpty())
+    }
+    @Test fun categoryAndEquipmentFiltersIgnoreCaseAndYoVariants() {
+        assertEquals("x1", index.filter(category = "грудь", equipment = "ГАНТЕЛИ").single().id)
+        assertEquals("x2", index.filter(category = "КВАДРИЦЕПСЫ", equipment = "ШТАНГА").single().id)
+        assertEquals(3, index.filter(category = "ВСЕ", equipment = "ЛЮБОЕ").size)
+    }
     @Test fun partialMultiwordQueryRequiresAllWords() {
         assertTrue(index.filter("жим икры").isEmpty())
         assertEquals(3, index.size)
