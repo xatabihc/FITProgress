@@ -39,8 +39,29 @@ jobs:
       - name: Configure Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Restore stable debug signing key on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.FITPROGRESS_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -n "$DEBUG_KEYSTORE_BASE64" ]]; then
+            mkdir -p "$HOME/.android"
+            umask 077
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+            echo "Configured debug signing key restored for main"
+          else
+            echo "::warning::FITPROGRESS_DEBUG_KEYSTORE_BASE64 not configured: the cloud APK may have a different signature than previous installations."
+          fi
+
       - name: Run JVM tests, lint, and compile app and Android UI tests
         run: ./gradlew --no-daemon --no-parallel --max-workers=2 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+
+      - name: Verify and print debug APK signing certificate
+        if: success()
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -E 'Signer #1 certificate SHA-256 digest|Signer #1 certificate DN'
 
       - name: Upload debug APK
         if: success()
