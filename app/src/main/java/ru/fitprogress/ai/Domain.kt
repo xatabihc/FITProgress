@@ -128,7 +128,9 @@ object Gps {
     fun append(r: Run, p: GeoPoint, now: Long): Run {
         if (r.status != "active") return r
         val last = r.points.lastOrNull()
-        if(last != null && durationBetween(last, p) > 120000 && valid(p) && abs(now - p.time) <= 20000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
+        // A long gap cannot be measured reliably: start a new track segment rather than
+        // counting an invented straight-line distance across an unknown path.
+        if(last != null && durationBetween(last, p) > 30_000 && valid(p) && abs(now - p.time) <= 20_000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
         if(!accept(last, p, now)) return r
         val delta = if (last != null && last.segment == p.segment) distance(last, p) else 0.0
         val moving = if(last != null && last.segment == p.segment && durationBetween(last, p) in 1..20000 && delta / (durationBetween(last, p) / 1000.0) >= 0.5) durationBetween(last, p) else 0
