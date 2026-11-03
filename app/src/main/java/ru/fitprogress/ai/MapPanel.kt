@@ -37,6 +37,7 @@ import org.maplibre.geojson.*
 ) {
     val context = LocalContext.current; val owner = LocalLifecycleOwner.current
     var error by remember { mutableStateOf("") }; var map by remember { mutableStateOf<MapLibreMap?>(null) }; var styleLoaded by remember { mutableStateOf(false) }
+    var cameraInitialized by remember { mutableStateOf(false) }
     val selection = rememberUpdatedState(selectionEnabled); val tap = rememberUpdatedState(onMapTap)
     var mapReady by remember { mutableStateOf(false) }
     val mapView = remember {
@@ -106,7 +107,14 @@ import org.maplibre.geojson.*
             m.style?.getSourceAs<GeoJsonSource>("markers")?.setGeoJson(FeatureCollection.fromFeatures(markers.map { Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude)) }))
             val userFeature = currentLocation?.let { arrayOf(Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude))) } ?: emptyArray()
             m.style?.getSourceAs<GeoJsonSource>("user-location")?.setGeoJson(FeatureCollection.fromFeatures(userFeature))
-            if(plannedRoute == null && points.isEmpty() && currentLocation != null) m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLocation.latitude, currentLocation.longitude), 15.0))
+        }
+    }
+    // Marker updates must not steal the camera while the user pans to choose a start/finish.
+    LaunchedEffect(currentLocation, map, styleLoaded) {
+        val m = map ?: return@LaunchedEffect
+        if(styleLoaded && !cameraInitialized && plannedRoute == null && points.isEmpty() && currentLocation != null) {
+            m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLocation.latitude, currentLocation.longitude), 15.0))
+            cameraInitialized = true
         }
     }
     LaunchedEffect(followUser, currentLocation, map, styleLoaded) {
