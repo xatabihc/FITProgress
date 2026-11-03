@@ -66,7 +66,7 @@ class DomainTest {
     @Test fun signalGapOverThirtySecondsDoesNotInventStraightLineDistance() {
         val first = GeoPoint(0.0, 0.0, 5f, 100_000, elapsedMs = 1000, boot = 1)
         val returned = first.copy(lon = 0.001, time = 145_000, elapsedMs = 46_000)
-        val afterReturn = returned.copy(lon = 0.0011, time = 150_000, elapsedMs = 51_000)
+        val afterReturn = returned.copy(lon = 0.0011, time = 150_000, elapsedMs = 51_000, segment = 1)
         val start = Run(points = listOf(first), distance = 0.0, segment = 0)
         val gap = Gps.append(start, returned, returned.time)
         assertEquals(0.0, gap.distance, 0.0)
