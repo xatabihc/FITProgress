@@ -18,7 +18,7 @@ class DomainTest {
     @Test fun clockRollbackCannotMakeNegativeDuration() { assertEquals(0, Training.resume(workout(), 10000).elapsed(1)) }
     @Test fun duplicationResetsResultsAndIds() { val source = done().copy(items = listOf(Training.item(exercise()).copy(sets = listOf(SetEntry(done = true))))); val copy = Training.duplicate(source); assertNotEquals(source.id, copy.id); assertNotEquals(source.items[0].id, copy.items[0].id); assertFalse(copy.items[0].sets[0].done); assertEquals("planned", copy.status); assertEquals(0, copy.started) }
     @Test fun copyWeekPreservesHistoryAndOffsets() { val w = done().copy(date = "2026-10-28"); val copies = Training.copyWeek(listOf(w, workout().copy(template = true), workout().copy(date = "2026-11-02")), LocalDate.parse("2026-10-26"), LocalDate.parse("2026-11-09")); assertEquals(1, copies.size); assertEquals("2026-11-11", copies[0].date); assertEquals("done", w.status); assertEquals("2026-10-28", w.date) }
-    @Test fun programsHaveConcreteSchedulesAndRecoveryDays() { assertEquals(22, Catalog.programs.size); assertEquals(Catalog.programs.size, Catalog.programs.map { it.id }.distinct().size); for(p in Catalog.programs) { val plan = Catalog.schedule(p, LocalDate.parse("2026-11-02")); assertEquals(p.weeks * p.weekdays.size, plan.size); assertTrue(plan.all { it.items.isNotEmpty() && LocalDate.parse(it.date).dayOfWeek.value in p.weekdays }); assertTrue(p.weekdays.size <= 4); assertTrue(p.progression.isNotBlank()); assertTrue(p.advice.isNotBlank()) } }
+    @Test fun programsHaveConcreteSchedulesAndRecoveryDays() { assertEquals(25, Catalog.programs.size); assertEquals(Catalog.programs.size, Catalog.programs.map { it.id }.distinct().size); for(p in Catalog.programs) { val plan = Catalog.schedule(p, LocalDate.parse("2026-11-02")); assertEquals(p.weeks * p.weekdays.size, plan.size); assertTrue(plan.all { it.items.isNotEmpty() && LocalDate.parse(it.date).dayOfWeek.value in p.weekdays }); assertTrue(p.weekdays.size <= 4); assertTrue(p.progression.isNotBlank()); assertTrue(p.advice.isNotBlank()) } }
     @Test fun newProgramsHaveProgressiveWeeksAndDeloadWithoutChangingBaseDefinitions() {
         val start = LocalDate.parse("2026-11-02")
         val ids = listOf("home-strength-2", "gym-foundation-3", "calisthenics-steady-2", "functional-steady-3")
@@ -34,6 +34,24 @@ class DomainTest {
             assertEquals(p.sets - 1, lastWeek.items.first().sets.size)
             assertTrue(lastWeek.items.all { item -> item.sets.all { !it.done } })
             assertEquals(p.reps, Catalog.programs.single { it.id == id }.reps)
+        }
+    }
+    @Test fun advancedPlansKeepDifferentDaysAndOfferDeload() {
+        val start = LocalDate.parse("2026-11-02")
+        val ids = listOf("gym-upper-lower-advanced", "calisthenics-advanced-control", "home-advanced-strength")
+        for(id in ids) {
+            val plan = Catalog.programs.single { it.id == id }
+            assertEquals("Продвинутый", plan.level)
+            assertEquals(plan.weekdays.size, plan.dayExercises.size)
+            assertEquals(plan.weekdays.size, plan.dayExercises.distinct().size)
+            val schedule = Catalog.schedule(plan, start)
+            assertEquals(plan.weeks * plan.weekdays.size, schedule.size)
+            assertTrue(schedule.all { it.items.isNotEmpty() && it.items.all { item -> item.sets.none { it.done } } })
+            assertEquals(plan.sets, schedule.first().items.first().sets.size)
+            assertEquals(plan.reps, schedule.first().items.first().sets.first().reps)
+            val last = schedule.first { it.date == start.plusDays((plan.weeks - 1) * 7L + plan.weekdays.first() - 1).toString() }
+            assertEquals(plan.sets - 1, last.items.first().sets.size)
+            assertTrue(last.items.first().sets.first().reps > plan.reps)
         }
     }
     @Test fun strengthProgramDaysUseDistinctTemplatesAndKeepHistorySeparate() { val p = Catalog.programs.first { it.id == "Тренажёрный зал-1" }; assertEquals(4, p.dayExercises.size); assertNotEquals(p.dayExercises[0], p.dayExercises[1]); val plan = Catalog.schedule(p, LocalDate.parse("2026-11-02")); assertNotEquals(plan[0].items.map { it.name }, plan[1].items.map { it.name }); assertTrue(plan.all { it.items.all { item -> item.sets.all { set -> !set.done } } }) }
