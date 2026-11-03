@@ -454,8 +454,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         AlertDialog(onDismissRequest = { imported = null }, title = { Text("Проверка импорта") }, text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("${p.name} · ${p.weeks} нед. · ${p.days.size} занятий · ${p.days.sumOf { it.exercises.size }} назначений упражнений")
+                val distances = p.days.sumOf { day -> day.exercises.count { it.distanceMeters > 0 || it.setDetails.any { set -> set.distanceMeters > 0 } } }
+                val perSet = p.days.sumOf { day -> day.exercises.count { it.setDetails.isNotEmpty() } }
+                Text("Дистанция в ${distances} назначениях, отдельные параметры подходов в ${perSet}.", style = MaterialTheme.typography.bodySmall)
                 Field("Начало первой недели (понедельник)", importStart, { importStart = it })
-                Text("Каждое назначение будет сопоставлено со встроенным упражнением либо выбрано вручную. Добавленные занятия можно редактировать в календаре.", style = MaterialTheme.typography.bodySmall)
+                Text("Импорт сохраняет плановые подходы, дистанцию, время и исходную цель, если они есть в JSON. Фактическая история выполненных занятий автоматически не восстанавливается.", style = MaterialTheme.typography.bodySmall)
                 p.days.take(12).forEach { day -> Text("Неделя ${day.week} · ${day.weekday}: ${day.title.ifBlank { "занятие" }} — ${day.exercises.joinToString { "${it.name} (${it.sets}×${it.reps}${if(it.seconds > 0) ", ${it.seconds} сек" else ""})" }}", style = MaterialTheme.typography.bodySmall) }
                 if(p.days.size > 12) Text("…ещё ${p.days.size - 12} занятий")
                 unresolved.forEach { name -> TextButton(onClick = { mappingChooser = name; mappingQuery = name }) { Text("Сопоставить «$name» → выбрать упражнение") } }
@@ -483,7 +486,17 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                     val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } }
                         ?: allExercises.firstOrNull { it.name.equals(e.name, true) }
                         ?: requireNotNull(newlyCreated[e.name]) { "Упражнение не сопоставлено: ${e.name}" }
-                    WorkoutItem(exerciseId = canonical.id, name = canonical.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weightKg, seconds = e.seconds) }, rest = e.restSeconds, muscleGroup = canonical.category)
+                    val prescription = if(e.setDetails.isNotEmpty()) e.setDetails.map { set ->
+                        SetEntry(reps = set.reps, weight = set.weightKg, seconds = set.seconds,
+                            distanceMeters = set.distanceMeters, restSeconds = set.restSeconds,
+                            comment = set.note)
+                    } else List(e.sets) {
+                        SetEntry(reps = e.reps, weight = e.weightKg, seconds = e.seconds,
+                            distanceMeters = e.distanceMeters)
+                    }
+                    WorkoutItem(exerciseId = canonical.id, name = e.name, sets = prescription,
+                        rest = e.restSeconds, muscleGroup = canonical.category,
+                        notes = listOf(e.target, e.note).filter { it.isNotBlank() }.joinToString("\n"))
                 }
                 Workout(name = "${p.name} · неделя ${d.week} · ${d.title.ifBlank { "занятие" }}", date = date.toString(), items = items, program = planId, notes = "Импортирована пользователем · ${p.direction} · ${p.level}")
             }
