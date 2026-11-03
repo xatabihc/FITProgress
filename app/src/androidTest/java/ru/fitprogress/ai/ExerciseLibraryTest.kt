@@ -22,6 +22,18 @@ class ExerciseLibraryTest {
         assertTrue(index.filter("hamstrings").isNotEmpty())
         assertTrue(index.filter(category = "Грудь", equipment = "гантели").isNotEmpty())
     }
+    @Test fun russianGymNamesPreserveSourceIdsAndEnglishSearch() = runBlocking {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as FitApp
+        check(app.isolatedTestStorage)
+        val rows = withTimeout(15000) { app.repository.exercises.first { it.size >= 800 } }
+        val byId = rows.associateBy { it.id }
+        assertEquals("Жим штанги лёжа узким хватом", byId["open-Close-Grip_Barbell_Bench_Press"]?.name)
+        assertEquals("Выпады с гантелями", byId["open-Dumbbell_Lunges"]?.name)
+        assertEquals("Скручивания на верхнем блоке", byId["open-Cable_Crunch"]?.name)
+        val index = ExerciseSearchIndex(rows)
+        assertTrue(index.filter("Cable Crunch").any { it.id == "open-Cable_Crunch" })
+        assertTrue(index.filter("жим штанги лёжа узким").any { it.id == "open-Close-Grip_Barbell_Bench_Press" })
+    }
     @Test fun strengthFilterIncludesAllStrengthRecordsFromBundledSource() = runBlocking {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as FitApp
         check(app.isolatedTestStorage)
