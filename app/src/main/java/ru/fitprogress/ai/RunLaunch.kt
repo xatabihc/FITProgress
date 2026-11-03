@@ -22,6 +22,13 @@ object GpsFallbackPolicy {
         finePermission && gpsPresent && gpsEnabled && !alreadyUsingPlatform
 }
 
+/** Accuracy must never appear current when the last recorded point is stale. */
+object GpsSignalStatus {
+    fun accuracyLabel(last: GeoPoint?, now: ClockStamp): String =
+        if(last == null || !Gps.valid(last) || Gps.age(last, now) !in 0L..20_000L) "Нет свежего GPS"
+        else "±${last.accuracy.toInt()} м"
+}
+
 /** Shared launch handshake; no GPS coordinates or private history in diagnostic messages. */
 class RunLaunchController {
     private val attempts = java.util.concurrent.atomic.AtomicLong()
