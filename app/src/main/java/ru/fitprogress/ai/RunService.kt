@@ -241,6 +241,9 @@ class RunService : Service() {
         }
     }
     private fun subscribePlatformGps() {
+        if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Для системного GPS требуется разрешение точной геолокации")
+        }
         require(locations.allProviders.contains(LocationManager.GPS_PROVIDER) && locations.isProviderEnabled(LocationManager.GPS_PROVIDER)) { "GPS_PROVIDER unavailable" }
         locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, platformListener, Looper.getMainLooper())
         usingPlatformGps = true
