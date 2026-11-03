@@ -55,7 +55,7 @@ class ExerciseSearchIndex(exercises: List<Exercise>) {
         return indexed.asSequence().filter { row ->
             (categoryKey == "все" || row.categoryKey == categoryKey) &&
                 (equipmentKey == "любое" || row.equipmentKey == equipmentKey) &&
-                (level == "Любой" || row.meta?.level == level) &&
+                (foldSearch(level) == "любой" || foldSearch(row.meta?.level.orEmpty()) == foldSearch(level)) &&
                 (typeKey == "любой тип" || row.typeKey == typeKey) &&
                 (origin == "Все источники" || if (origin == "Встроенные") row.exercise.builtIn else !row.exercise.builtIn) &&
                 terms.all { it in row.text }
