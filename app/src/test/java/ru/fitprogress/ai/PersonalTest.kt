@@ -31,6 +31,34 @@ class PersonalTest {
     @Test fun invalidGoalAndWellbeingAreRejected() { assertThrows(IllegalArgumentException::class.java) { PersonalValidation.goal(goal().copy(target = Double.NaN)) }; assertThrows(IllegalArgumentException::class.java) { PersonalValidation.wellbeing(Wellbeing(energy = 11)) } }
     @Test fun newBackupRoundTripsGoalsAndDiary() { val b = Backup(goals = listOf(goal()), wellbeing = diary()); assertEquals(b, BackupCodec.decode(BackupCodec.encode(b))) }
     @Test fun duplicateDiaryDatesAreRejectedAtImport() { val d = diary().first(); assertThrows(IllegalArgumentException::class.java) { BackupCodec.decode(BackupCodec.encode(Backup(wellbeing = listOf(d, d)))) } }
+    @Test fun weeklyReviewCountsSavedResultsAndExcludesDemoRuns() {
+        val completed = workout("2026-11-09")
+        val planned = workout("2026-11-11", done = false)
+        val review = AdaptiveCoach().review(
+            listOf(completed, planned, workout("2026-11-02")),
+            listOf(run("2026-11-10", 2300.0), run("2026-11-12", demo = true)),
+            diary(), today
+        )
+        assertEquals("2026-11-09", review.from)
+        assertEquals("2026-11-15", review.until)
+        assertEquals(2, review.plannedSessions)
+        assertEquals(1, review.completedPlannedSessions)
+        assertEquals(1, review.completedSessions)
+        assertEquals(1, review.completedRuns)
+        assertEquals(2.3, review.runningKm, .001)
+        assertEquals(2, review.activeDays)
+        assertEquals(1, review.diaryEntries)
+        assertFalse(review.painReported)
+    }
+    @Test fun weeklyReviewReportsPainAndDoesNotIncludeOutsideWeek() {
+        val review = AdaptiveCoach().review(
+            listOf(workout("2026-11-09", pain = true), workout("2026-11-02")),
+            emptyList(), emptyList(), today
+        )
+        assertTrue(review.painReported)
+        assertEquals(1, review.completedSessions)
+        assertEquals(0.0, review.runningKm, .0)
+    }
     @Test fun sixCoachOptionsAreAlwaysExplained() { val choices = AdaptiveCoach().options(emptyList(), emptyList(), emptyList(), today); assertEquals(6, choices.size); assertTrue(choices.all { it.reason.isNotBlank() && it.metrics.isNotBlank() }); assertTrue(choices.single { it.id == "manual" }.enabled) }
     @Test fun coachProgressRequiresDiaryAndEvidence() { assertFalse(AdaptiveCoach().options(history(), emptyList(), emptyList(), today).single { it.id == "progress" }.enabled); assertTrue(AdaptiveCoach().options(history(), emptyList(), diary(), today).single { it.id == "progress" }.enabled) }
     @Test fun currentPainBlocksProgressEvenOutsideLastWeek() { val ds = diary() + Wellbeing(date = today.toString(), pain = true); assertFalse(AdaptiveCoach().options(history(), emptyList(), ds, today).single { it.id == "progress" }.enabled) }
