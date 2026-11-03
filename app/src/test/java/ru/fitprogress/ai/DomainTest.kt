@@ -63,6 +63,26 @@ class DomainTest {
     @Test fun gpsAcceptsPlausibleMovement() { val a = GeoPoint(0.0, 0.0, 5f, 100000); val b = a.copy(lon = 0.0001, time = 105000); assertTrue(Gps.accept(a, b, 105000)); val r = Gps.append(Run(started = 100000, points = listOf(a)), b, 105000); assertEquals(11.1195, r.distance, 0.1) }
     @Test fun pauseSegmentDoesNotBridgeDistance() { val a = GeoPoint(0.0, 0.0, 5f, 100000); val b = a.copy(lon = 1.0, time = 105000, segment = 1); val r = Gps.append(Run(points = listOf(a), segment = 1), b, 105000); assertEquals(0.0, r.distance, 0.0); assertEquals(2, r.points.size) }
     @Test fun gpsRecoversAfterLongSignalLossWithoutInventingDistance() { val a = GeoPoint(0.0, 0.0, 5f, 100000); val b = a.copy(lon = 1.0, time = 300000); val r = Gps.append(Run(points = listOf(a)), b, 300000); assertEquals(0.0, r.distance, 0.0); assertEquals(1, r.segment); assertEquals(2, r.points.size) }
+    @Test fun signalGapOverThirtySecondsDoesNotInventStraightLineDistance() {
+        val first = GeoPoint(0.0, 0.0, 5f, 100_000, elapsedMs = 1000, boot = 1)
+        val returned = first.copy(lon = 0.001, time = 145_000, elapsedMs = 46_000)
+        val afterReturn = returned.copy(lon = 0.0011, time = 150_000, elapsedMs = 51_000)
+        val start = Run(points = listOf(first), distance = 0.0, segment = 0)
+        val gap = Gps.append(start, returned, returned.time)
+        assertEquals(0.0, gap.distance, 0.0)
+        assertEquals(1, gap.segment)
+        assertEquals(1, gap.points.last().segment)
+        val continued = Gps.append(gap, afterReturn, afterReturn.time)
+        assertEquals(1, continued.points.last().segment)
+        assertEquals(11.1195, continued.distance, 0.1)
+    }
+    @Test fun shortGpsGapCountsPlausibleProgressNormally() {
+        val first = GeoPoint(0.0, 0.0, 5f, 100_000)
+        val next = first.copy(lon = 0.0002, time = 120_000)
+        val result = Gps.append(Run(points = listOf(first)), next, next.time)
+        assertEquals(0, result.segment)
+        assertEquals(22.239, result.distance, 0.1)
+    }
     @Test fun noProgressionWhenPainFatigueOrPoorRecovery() { for(w in listOf(done(pain = true), done(effort = 9), done(recovery = 3))) { val choices = LocalRecommendations().suggest(listOf(w, done()), emptyList()); assertFalse(choices.any { it.factor != null && it.factor > 1 }); assertTrue(choices.any { it.factor == 0.8 }) } }
     @Test fun progressionRequiresAdherenceAndEvidence() { assertFalse(LocalRecommendations().suggest(emptyList(), emptyList()).any { it.factor == 1.05 }); assertTrue(LocalRecommendations().suggest(listOf(done(), done()), emptyList()).any { it.factor == 1.05 }) }
     @Test fun recommendationPreviewDoesNotMutateHistory() { val source = done(); val preview = LocalRecommendations().preview(listOf(source), LocalDate.parse("2026-10-26"), LocalDate.parse("2026-11-02"), 1.05); assertEquals(20.0, source.items[0].sets[0].weight, 0.0); assertEquals(21.0, preview.first().items[0].sets[0].weight, 0.0) }
