@@ -39,8 +39,8 @@ jobs:
       - name: Configure Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run unit tests, lint, and assemble debug APK
-        run: ./gradlew --no-daemon --no-parallel --max-workers=2 testDebugUnitTest lintDebug assembleDebug
+      - name: Run JVM tests, lint, and compile app and Android UI tests
+        run: ./gradlew --no-daemon --no-parallel --max-workers=2 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 
       - name: Upload debug APK
         if: success()
@@ -48,6 +48,15 @@ jobs:
         with:
           name: FitProgressAI-debug-${{ github.run_number }}
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Android instrumentation test APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FitProgressAI-androidTest-${{ github.run_number }}
+          path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           if-no-files-found: error
           retention-days: 7
 
