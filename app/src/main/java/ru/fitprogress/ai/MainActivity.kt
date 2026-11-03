@@ -120,7 +120,7 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
         }, bottomBar = if(route == "running-active") ({}) else ({
             NavigationBar {
                 listOf(Triple("home", stringResource(R.string.nav_home), Icons.Default.Home), Triple("catalog", stringResource(R.string.nav_catalog), Icons.Default.FitnessCenter), Triple("calendar", stringResource(R.string.nav_plan), Icons.Default.CalendarMonth), Triple("running", stringResource(R.string.nav_run), Icons.Default.DirectionsRun), Triple("stats", stringResource(R.string.nav_progress), Icons.Default.Insights)).forEach { (path, name, icon) ->
-                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
+                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { if(path == "home") { if(route != "home" && !nav.popBackStack("home", false)) nav.navigate("home") { launchSingleTop = true } } else if(route != path) { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
                 }
             }
         })) { padding ->
