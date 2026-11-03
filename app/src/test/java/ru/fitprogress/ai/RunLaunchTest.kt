@@ -4,6 +4,17 @@ import org.junit.Test
 import org.junit.Assert.*
 
 class RunLaunchTest {
+    @Test fun failedFusedSubscriptionCanFallBackToEnabledSystemGps() {
+        assertTrue(GpsFallbackPolicy.canUsePlatformGps(true, true, true, false))
+    }
+    @Test fun fallbackNeverBypassesMissingPermissionOrDisabledProvider() {
+        assertFalse(GpsFallbackPolicy.canUsePlatformGps(false, true, true, false))
+        assertFalse(GpsFallbackPolicy.canUsePlatformGps(true, false, true, false))
+        assertFalse(GpsFallbackPolicy.canUsePlatformGps(true, true, false, false))
+    }
+    @Test fun fallbackCannotRegisterPlatformGpsTwice() {
+        assertFalse(GpsFallbackPolicy.canUsePlatformGps(true, true, true, true))
+    }
     @Test fun successfulLaunchIsAcknowledgedWithoutFirstFix() {
         val c = RunLaunchController(); var starts = 0
         assertTrue(c.request(true)); assertEquals(RunLaunchPhase.STARTING, c.state.value.phase)
