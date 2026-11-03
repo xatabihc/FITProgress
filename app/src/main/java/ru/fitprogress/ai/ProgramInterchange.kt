@@ -3,13 +3,26 @@ package ru.fitprogress.ai
 import com.google.gson.JsonParser
 import java.util.Locale
 
+/** Optional individual prescription: preserves distance, time and per-set progression. */
+data class ImportedProgramSet(
+    val reps: Int = 0,
+    val weightKg: Double = 0.0,
+    val seconds: Int = 0,
+    val distanceMeters: Double = 0.0,
+    val restSeconds: Int? = null,
+    val note: String = ""
+)
 data class ImportedProgramExercise(
     val name: String,
     val sets: Int,
     val reps: Int,
     val weightKg: Double = 0.0,
     val seconds: Int = 0,
-    val restSeconds: Int = 60
+    val restSeconds: Int = 60,
+    val distanceMeters: Double = 0.0,
+    val target: String = "",
+    val note: String = "",
+    val setDetails: List<ImportedProgramSet> = emptyList()
 )
 data class ImportedProgramDay(val week: Int, val weekday: Int, val title: String, val exercises: List<ImportedProgramExercise>)
 data class ImportedProgram(val name: String, val direction: String, val level: String, val weeks: Int, val days: List<ImportedProgramDay>)
@@ -25,10 +38,27 @@ object ProgramInterchange {
                 day.get("title")?.takeUnless { it.isJsonNull }?.asString.orEmpty(),
                 day.getAsJsonArray("exercises").map { n ->
                     val e = n.asJsonObject
-                    ImportedProgramExercise(e.get("name").asString, e.get("sets").asInt, e.get("reps").asInt,
-                        e.get("weightKg")?.takeUnless { it.isJsonNull }?.asDouble ?: 0.0,
-                        e.get("seconds")?.takeUnless { it.isJsonNull }?.asInt ?: 0,
-                        e.get("restSeconds")?.takeUnless { it.isJsonNull }?.asInt ?: 60)
+                    fun num(key: String) = e.get(key)?.takeUnless { it.isJsonNull }
+                    val details = e.getAsJsonArray("setDetails")?.map { node ->
+                        val set = node.asJsonObject
+                        fun n(key: String) = set.get(key)?.takeUnless { it.isJsonNull }
+                        ImportedProgramSet(
+                            reps = n("reps")?.asInt ?: 0,
+                            weightKg = n("weightKg")?.asDouble ?: 0.0,
+                            seconds = n("seconds")?.asInt ?: 0,
+                            distanceMeters = n("distanceMeters")?.asDouble ?: 0.0,
+                            restSeconds = n("restSeconds")?.asInt,
+                            note = n("note")?.asString.orEmpty()
+                        )
+                    }.orEmpty()
+                    ImportedProgramExercise(e.get("name").asString, e.get("sets").asInt,
+                        num("reps")?.asInt ?: 0,
+                        num("weightKg")?.asDouble ?: 0.0,
+                        num("seconds")?.asInt ?: 0,
+                        num("restSeconds")?.asInt ?: 60,
+                        num("distanceMeters")?.asDouble ?: 0.0,
+                        num("target")?.asString.orEmpty(),
+                        num("note")?.asString.orEmpty(), details)
                 })
         }
         return validate(ImportedProgram(root.get("name").asString,
@@ -68,7 +98,20 @@ object ProgramInterchange {
         require(p.days.isNotEmpty() && p.days.size <= p.weeks * 7) { "Проверьте количество занятий" }
         require(p.days.all { it.week in 1..p.weeks && it.weekday in 1..7 && it.exercises.isNotEmpty() }) { "Неделя/день/упражнения вне допустимого диапазона" }
         require(p.days.map { Triple(it.week, it.weekday, it.title) }.distinct().size == p.days.size) { "Повторяется один и тот же день программы" }
-        require(p.days.all { day -> day.exercises.all { e -> e.name.isNotBlank() && e.name.length <= 120 && e.sets in 1..30 && e.reps in 0..10000 && e.weightKg.isFinite() && e.weightKg in 0.0..2000.0 && e.seconds in 0..86400 && e.restSeconds in 0..3600 && (e.reps > 0 || e.seconds > 0) } }) { "Некорректные параметры упражнения" }
+        require(p.days.all { day -> day.exercises.all { e ->
+            e.name.isNotBlank() && e.name.length <= 120 && e.sets in 1..30 &&
+            e.reps in 0..10000 && e.weightKg.isFinite() && e.weightKg in 0.0..2000.0 &&
+            e.seconds in 0..86400 && e.restSeconds in 0..3600 &&
+            e.distanceMeters.isFinite() && e.distanceMeters in 0.0..1_000_000.0 &&
+            e.target.length <= 500 && e.note.length <= 2000 &&
+            (e.setDetails.isNotEmpty() || e.reps > 0 || e.seconds > 0 || e.distanceMeters > 0) &&
+            (e.setDetails.isEmpty() || (e.setDetails.size == e.sets && e.setDetails.all { set ->
+                set.reps in 0..10000 && set.weightKg.isFinite() && set.weightKg in 0.0..2000.0 &&
+                set.seconds in 0..86400 && set.distanceMeters.isFinite() &&
+                set.distanceMeters in 0.0..1_000_000.0 && (set.restSeconds == null || set.restSeconds in 0..3600) &&
+                set.note.length <= 1000 && (set.reps > 0 || set.seconds > 0 || set.distanceMeters > 0)
+            }))
+        } }) { "Некорректные параметры упражнения" }
         return p
     }
 
