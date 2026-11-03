@@ -415,7 +415,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var direction by rememberSaveable { mutableStateOf("Все") }; var selected by remember { mutableStateOf<Program?>(null) }; var startText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }; var error by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }; var levelFilter by rememberSaveable { mutableStateOf("Любой") }; var daysFilter by rememberSaveable { mutableStateOf("Любое число") }; var durationFilter by rememberSaveable { mutableStateOf("Любая") }; var equipmentFilter by rememberSaveable { mutableStateOf("Любое оборудование") }
     var imported by remember { mutableStateOf<ImportedProgram?>(null) }; var importError by remember { mutableStateOf("") }; var importStart by rememberSaveable { mutableStateOf(LocalDate.now().with(java.time.DayOfWeek.MONDAY).toString()) }; var mappingChooser by remember { mutableStateOf<String?>(null) }; var mappingQuery by rememberSaveable { mutableStateOf("") }
-    val mapping = remember { mutableStateMapOf<String, String>() }; val context = LocalContext.current; val scope = rememberCoroutineScope(); val allExercises by vm.exercises.collectAsStateWithLifecycle()
+    var createMissing by remember { mutableStateOf(true) }; val mapping = remember { mutableStateMapOf<String, String>() }; val context = LocalContext.current; val scope = rememberCoroutineScope(); val allExercises by vm.exercises.collectAsStateWithLifecycle()
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch { runCatching { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("Не удалось прочитать файл") } }.onSuccess { content -> runCatching { if(uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase() == "csv") ProgramInterchange.parseCsv(content) else ProgramInterchange.parseJson(content) }.onSuccess { imported = it; importError = ""; mapping.clear() }.onFailure { importError = it.message ?: "Некорректный файл программы" } }.onFailure { importError = it.message ?: "Не удалось открыть файл" } } }
     val saved by vm.workouts.collectAsStateWithLifecycle()
     val programEquipmentOptions = remember(allExercises) { listOf("Любое оборудование") + allExercises.map { it.equipment }.filter { it.isNotBlank() }.distinct().sorted() }
@@ -460,19 +460,34 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 if(p.days.size > 12) Text("…ещё ${p.days.size - 12} занятий")
                 unresolved.forEach { name -> TextButton(onClick = { mappingChooser = name; mappingQuery = name }) { Text("Сопоставить «$name» → выбрать упражнение") } }
                 if(start == null) Text(if(parsedStart == null) "Введите дату в формате ГГГГ-ММ-ДД" else "Дата первой недели должна приходиться на понедельник", color = MaterialTheme.colorScheme.error)
-                if(unresolved.isNotEmpty()) Text("Осталось сопоставить: ${unresolved.size}", color = MaterialTheme.colorScheme.error)
+                if(unresolved.isNotEmpty()) {
+                    Text("Не найдены в каталоге: ${unresolved.size}", color = MaterialTheme.colorScheme.error)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = createMissing, onCheckedChange = { createMissing = it })
+                        Text("Создать отсутствующие как мои упражнения (с исходными названиями)", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
-        }, confirmButton = { TextButton(enabled = start != null && unresolved.isEmpty(), onClick = {
+        }, confirmButton = { TextButton(enabled = start != null && (unresolved.isEmpty() || createMissing), onClick = {
             val monday = start!!; val planId = "imported-${newId()}"
+            val missingExercises = if(createMissing) unresolved.map { name ->
+                val first = p.days.flatMap { it.exercises }.first { it.name == name }
+                Exercise(name = name, category = "Другие", sets = first.sets,
+                    reps = first.reps, seconds = first.seconds, rest = first.restSeconds,
+                    notes = "Добавлено при импорте программы «${p.name}». Проверьте технику и категорию.")
+            } else emptyList()
+            val newlyCreated = missingExercises.associateBy { it.name }
             val slots = p.days.map { d ->
                 val date = monday.plusDays((d.week - 1L) * 7 + d.weekday - 1L)
                 val items = d.exercises.map { e ->
-                    val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } } ?: allExercises.first { it.name.equals(e.name, true) }
+                    val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } }
+                        ?: allExercises.firstOrNull { it.name.equals(e.name, true) }
+                        ?: requireNotNull(newlyCreated[e.name]) { "Упражнение не сопоставлено: ${e.name}" }
                     WorkoutItem(exerciseId = canonical.id, name = canonical.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weightKg, seconds = e.seconds) }, rest = e.restSeconds, muscleGroup = canonical.category)
                 }
                 Workout(name = "${p.name} · неделя ${d.week} · ${d.title.ifBlank { "занятие" }}", date = date.toString(), items = items, program = planId, notes = "Импортирована пользователем · ${p.direction} · ${p.level}")
             }
-            vm.exclusive { vm.repo.saveAll(slots); imported = null; applied() }
+            vm.exclusive { vm.repo.saveImportedProgram(missingExercises, slots); imported = null; applied() }
         }) { Text("Добавить ${p.days.size} занятий") } }, dismissButton = { TextButton(onClick = { imported = null }) { Text("Отмена") } })
         if(mappingChooser != null) AlertDialog(onDismissRequest = { mappingChooser = null }, title = { Text("Сопоставление: ${mappingChooser}") }, text = {
             Column {
