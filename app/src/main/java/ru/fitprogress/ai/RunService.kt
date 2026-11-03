@@ -267,10 +267,11 @@ class RunService : Service() {
     private fun notification(r: Run?): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val finish = PendingIntent.getService(this, 2, Intent(this, RunService::class.java).setAction(FINISH), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val pause = PendingIntent.getService(this, 1, Intent(this, RunService::class.java).setAction(PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, "run").setSmallIcon(ru.fitprogress.ai.R.drawable.ic_logo).setContentTitle(if(r?.status == "paused") "Бег на паузе" else "FitProgress · запись GPS")
+        val paused = r?.status == "paused"
+        val control = PendingIntent.getService(this, 1, Intent(this, RunService::class.java).setAction(if(paused) RESUME else PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return NotificationCompat.Builder(this, "run").setSmallIcon(ru.fitprogress.ai.R.drawable.ic_logo).setContentTitle(if(paused) "Бег на паузе" else "FitProgress · запись GPS")
             .setContentText(if(r == null) "Подключение GPS…" else "%.2f км · %s".format(r.distance / 1000, formatTime(RunTimers.elapsed(r, AndroidClock.read(this))))).setContentIntent(open).setOngoing(true)
-            .addAction(0, "Пауза", pause).addAction(0, "Сохранить", finish).build()
+            .addAction(0, if(paused) "Продолжить" else "Пауза", control).addAction(0, "Сохранить", finish).build()
     }
     override fun onDestroy() {
         removeUpdates()
