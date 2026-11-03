@@ -28,4 +28,33 @@ class ProgramInterchangeTest {
         val d = ImportedProgramDay(1, 1, "A", listOf(ImportedProgramExercise("Squat", 3, 8)))
         assertThrows(IllegalArgumentException::class.java) { ProgramInterchange.validate(ImportedProgram("x", "", "", 1, listOf(d, d.copy(exercises = d.exercises.toList())))) }
     }
+    @Test fun acceptsDistanceAndIndividualSetsWithoutInventedRepetitions() {
+        val p = ProgramInterchange.parseJson(
+            """{"schemaVersion":1,"name":"Рубеж12","weeks":1,"days":[{"week":1,"weekday":2,
+            "title":"Интервальный бег","exercises":[{"name":"Интервалы 400 м","sets":2,
+            "reps":0,"distanceMeters":400,"target":"2 × 400 м, отдых 90 с",
+            "setDetails":[{"reps":0,"distanceMeters":400,"restSeconds":90},
+                          {"reps":0,"distanceMeters":450,"restSeconds":90}]}]}]}"""
+        )
+        val e = p.days.single().exercises.single()
+        assertEquals(400.0, e.distanceMeters, 0.0)
+        assertEquals(2, e.setDetails.size)
+        assertEquals(450.0, e.setDetails[1].distanceMeters, 0.0)
+        assertEquals(0, e.setDetails[0].reps)
+        assertEquals("2 × 400 м, отдых 90 с", e.target)
+    }
+    @Test fun rejectsLostOrInvalidIndividualSetDetails() {
+        val broken = ImportedProgramExercise("бег", 3, 0, setDetails = listOf(
+            ImportedProgramSet(distanceMeters = 400.0)))
+        assertThrows(IllegalArgumentException::class.java) {
+            ProgramInterchange.validate(ImportedProgram("Рубеж12", "", "", 1,
+                listOf(ImportedProgramDay(1, 2, "бег", listOf(broken)))))
+        }
+        val nan = ImportedProgramExercise("бег", 1, 0, distanceMeters = Double.NaN)
+        assertThrows(IllegalArgumentException::class.java) {
+            ProgramInterchange.validate(ImportedProgram("Рубеж12", "", "", 1,
+                listOf(ImportedProgramDay(1, 2, "бег", listOf(nan)))))
+        }
+    }
+
 }
