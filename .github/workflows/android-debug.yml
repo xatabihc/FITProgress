@@ -1,0 +1,95 @@
+name: Android debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-debug-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Configure Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configure Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Configure Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore stable debug signing key on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.FITPROGRESS_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -n "$DEBUG_KEYSTORE_BASE64" ]]; then
+            mkdir -p "$HOME/.android"
+            umask 077
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+            echo "Configured debug signing key restored for main"
+          else
+            echo "::warning::FITPROGRESS_DEBUG_KEYSTORE_BASE64 not configured: the cloud APK may have a different signature than previous installations."
+          fi
+
+      - name: Run JVM tests, lint, and compile app and Android UI tests
+        run: ./gradlew --no-daemon --no-parallel --max-workers=2 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+
+      - name: Verify and print debug APK signing certificate
+        if: success()
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -E 'Signer #1 certificate SHA-256 digest|Signer #1 certificate DN'
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FitProgressAI-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Android instrumentation test APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FitProgressAI-androidTest-${{ github.run_number }}
+          path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload unit test and lint reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FitProgressAI-diagnostics-${{ github.run_number }}
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+          if-no-files-found: ignore
+          retention-days: 7

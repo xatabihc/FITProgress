@@ -18,7 +18,42 @@ class DomainTest {
     @Test fun clockRollbackCannotMakeNegativeDuration() { assertEquals(0, Training.resume(workout(), 10000).elapsed(1)) }
     @Test fun duplicationResetsResultsAndIds() { val source = done().copy(items = listOf(Training.item(exercise()).copy(sets = listOf(SetEntry(done = true))))); val copy = Training.duplicate(source); assertNotEquals(source.id, copy.id); assertNotEquals(source.items[0].id, copy.items[0].id); assertFalse(copy.items[0].sets[0].done); assertEquals("planned", copy.status); assertEquals(0, copy.started) }
     @Test fun copyWeekPreservesHistoryAndOffsets() { val w = done().copy(date = "2026-10-28"); val copies = Training.copyWeek(listOf(w, workout().copy(template = true), workout().copy(date = "2026-11-02")), LocalDate.parse("2026-10-26"), LocalDate.parse("2026-11-09")); assertEquals(1, copies.size); assertEquals("2026-11-11", copies[0].date); assertEquals("done", w.status); assertEquals("2026-10-28", w.date) }
-    @Test fun programsHaveConcreteSchedulesAndRecoveryDays() { assertEquals(18, Catalog.programs.size); assertEquals(Catalog.programs.size, Catalog.programs.map { it.id }.distinct().size); for(p in Catalog.programs) { val plan = Catalog.schedule(p, LocalDate.parse("2026-11-02")); assertEquals(p.weeks * p.weekdays.size, plan.size); assertTrue(plan.all { it.items.isNotEmpty() && LocalDate.parse(it.date).dayOfWeek.value in p.weekdays }); assertTrue(p.weekdays.size <= 4); assertTrue(p.progression.isNotBlank()); assertTrue(p.advice.isNotBlank()) } }
+    @Test fun programsHaveConcreteSchedulesAndRecoveryDays() { assertEquals(25, Catalog.programs.size); assertEquals(Catalog.programs.size, Catalog.programs.map { it.id }.distinct().size); for(p in Catalog.programs) { val plan = Catalog.schedule(p, LocalDate.parse("2026-11-02")); assertEquals(p.weeks * p.weekdays.size, plan.size); assertTrue(plan.all { it.items.isNotEmpty() && LocalDate.parse(it.date).dayOfWeek.value in p.weekdays }); assertTrue(p.weekdays.size <= 4); assertTrue(p.progression.isNotBlank()); assertTrue(p.advice.isNotBlank()) } }
+    @Test fun newProgramsHaveProgressiveWeeksAndDeloadWithoutChangingBaseDefinitions() {
+        val start = LocalDate.parse("2026-11-02")
+        val ids = listOf("home-strength-2", "gym-foundation-3", "calisthenics-steady-2", "functional-steady-3")
+        ids.forEach { id ->
+            val p = Catalog.programs.single { it.id == id }
+            val calendar = Catalog.schedule(p, start)
+            assertEquals(p.weekdays.size * p.weeks, calendar.size)
+            assertTrue(calendar.all { it.items.isNotEmpty() })
+            assertEquals(p.reps, calendar.first().items.first().sets.first().reps)
+            val thirdWeek = calendar.first { it.date == start.plusDays(14 + p.weekdays.first().toLong() - 1).toString() }
+            assertEquals(p.reps + 1, thirdWeek.items.first().sets.first().reps)
+            val lastWeek = calendar.first { it.date == start.plusDays((p.weeks - 1) * 7L + p.weekdays.first() - 1).toString() }
+            assertEquals(p.sets - 1, lastWeek.items.first().sets.size)
+            assertTrue(lastWeek.items.all { item -> item.sets.all { !it.done } })
+            assertEquals(p.reps, Catalog.programs.single { it.id == id }.reps)
+        }
+    }
+    @Test fun advancedPlansKeepDifferentDaysAndOfferDeload() {
+        val start = LocalDate.parse("2026-11-02")
+        val ids = listOf("gym-upper-lower-advanced", "calisthenics-advanced-control", "home-advanced-strength")
+        for(id in ids) {
+            val plan = Catalog.programs.single { it.id == id }
+            assertEquals("Продвинутый", plan.level)
+            assertEquals(plan.weekdays.size, plan.dayExercises.size)
+            assertEquals(plan.weekdays.size, plan.dayExercises.distinct().size)
+            val schedule = Catalog.schedule(plan, start)
+            assertEquals(plan.weeks * plan.weekdays.size, schedule.size)
+            assertTrue(schedule.all { it.items.isNotEmpty() && it.items.all { item -> item.sets.none { it.done } } })
+            assertEquals(plan.sets, schedule.first().items.first().sets.size)
+            assertEquals(plan.reps, schedule.first().items.first().sets.first().reps)
+            val last = schedule.first { it.date == start.plusDays((plan.weeks - 1) * 7L + plan.weekdays.first() - 1).toString() }
+            assertEquals(plan.sets - 1, last.items.first().sets.size)
+            assertTrue(last.items.first().sets.first().reps > plan.reps)
+        }
+    }
     @Test fun strengthProgramDaysUseDistinctTemplatesAndKeepHistorySeparate() { val p = Catalog.programs.first { it.id == "Тренажёрный зал-1" }; assertEquals(4, p.dayExercises.size); assertNotEquals(p.dayExercises[0], p.dayExercises[1]); val plan = Catalog.schedule(p, LocalDate.parse("2026-11-02")); assertNotEquals(plan[0].items.map { it.name }, plan[1].items.map { it.name }); assertTrue(plan.all { it.items.all { item -> item.sets.all { set -> !set.done } } }) }
     @Test fun retiredProgramIdsRemainReadableForExistingHistory() { assertTrue(Catalog.programTitle("Бег-2").contains("сохранённый план")); assertEquals("Подготовка к 5 км · общий план", Catalog.programTitle("running-4")) }
     @Test fun runningProgramContainsWarmupWorkRecoveryCooldown() { val p = Catalog.programs.first { it.id == "running-0" }; val w = Catalog.schedule(p, LocalDate.parse("2026-11-02")).first(); assertEquals(300, w.items.first().sets.first().seconds); assertEquals(300, w.items.last().sets.first().seconds); assertEquals(14, w.items.size) }
@@ -28,6 +63,26 @@ class DomainTest {
     @Test fun gpsAcceptsPlausibleMovement() { val a = GeoPoint(0.0, 0.0, 5f, 100000); val b = a.copy(lon = 0.0001, time = 105000); assertTrue(Gps.accept(a, b, 105000)); val r = Gps.append(Run(started = 100000, points = listOf(a)), b, 105000); assertEquals(11.1195, r.distance, 0.1) }
     @Test fun pauseSegmentDoesNotBridgeDistance() { val a = GeoPoint(0.0, 0.0, 5f, 100000); val b = a.copy(lon = 1.0, time = 105000, segment = 1); val r = Gps.append(Run(points = listOf(a), segment = 1), b, 105000); assertEquals(0.0, r.distance, 0.0); assertEquals(2, r.points.size) }
     @Test fun gpsRecoversAfterLongSignalLossWithoutInventingDistance() { val a = GeoPoint(0.0, 0.0, 5f, 100000); val b = a.copy(lon = 1.0, time = 300000); val r = Gps.append(Run(points = listOf(a)), b, 300000); assertEquals(0.0, r.distance, 0.0); assertEquals(1, r.segment); assertEquals(2, r.points.size) }
+    @Test fun signalGapOverThirtySecondsDoesNotInventStraightLineDistance() {
+        val first = GeoPoint(0.0, 0.0, 5f, 100_000, elapsedMs = 1000, boot = 1)
+        val returned = first.copy(lon = 0.001, time = 145_000, elapsedMs = 46_000)
+        val afterReturn = returned.copy(lon = 0.0011, time = 150_000, elapsedMs = 51_000, segment = 1)
+        val start = Run(points = listOf(first), distance = 0.0, segment = 0)
+        val gap = Gps.append(start, returned, returned.time)
+        assertEquals(0.0, gap.distance, 0.0)
+        assertEquals(1, gap.segment)
+        assertEquals(1, gap.points.last().segment)
+        val continued = Gps.append(gap, afterReturn, afterReturn.time)
+        assertEquals(1, continued.points.last().segment)
+        assertEquals(11.1195, continued.distance, 0.1)
+    }
+    @Test fun shortGpsGapCountsPlausibleProgressNormally() {
+        val first = GeoPoint(0.0, 0.0, 5f, 100_000)
+        val next = first.copy(lon = 0.0002, time = 120_000)
+        val result = Gps.append(Run(points = listOf(first)), next, next.time)
+        assertEquals(0, result.segment)
+        assertEquals(22.239, result.distance, 0.1)
+    }
     @Test fun noProgressionWhenPainFatigueOrPoorRecovery() { for(w in listOf(done(pain = true), done(effort = 9), done(recovery = 3))) { val choices = LocalRecommendations().suggest(listOf(w, done()), emptyList()); assertFalse(choices.any { it.factor != null && it.factor > 1 }); assertTrue(choices.any { it.factor == 0.8 }) } }
     @Test fun progressionRequiresAdherenceAndEvidence() { assertFalse(LocalRecommendations().suggest(emptyList(), emptyList()).any { it.factor == 1.05 }); assertTrue(LocalRecommendations().suggest(listOf(done(), done()), emptyList()).any { it.factor == 1.05 }) }
     @Test fun recommendationPreviewDoesNotMutateHistory() { val source = done(); val preview = LocalRecommendations().preview(listOf(source), LocalDate.parse("2026-10-26"), LocalDate.parse("2026-11-02"), 1.05); assertEquals(20.0, source.items[0].sets[0].weight, 0.0); assertEquals(21.0, preview.first().items[0].sets[0].weight, 0.0) }

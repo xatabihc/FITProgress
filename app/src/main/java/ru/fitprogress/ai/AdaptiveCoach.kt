@@ -6,7 +6,37 @@ import kotlin.math.*
 data class CoachOption(val id: String, val title: String, val reason: String, val enabled: Boolean, val metrics: String)
 data class CoachReceipt(val week: String = "", val option: String = "", val appliedAt: Long = 0, val workoutIds: List<String> = emptyList())
 data class CoachPreview(val option: CoachOption, val from: String, val until: String, val workouts: List<Workout>, val differences: List<String>)
+data class WeekReview(
+    val from: String,
+    val until: String,
+    val plannedSessions: Int,
+    val completedPlannedSessions: Int,
+    val completedSessions: Int,
+    val completedRuns: Int,
+    val runningKm: Double,
+    val activeDays: Int,
+    val diaryEntries: Int,
+    val painReported: Boolean
+)
+
 class AdaptiveCoach {
+    fun review(all: List<Workout>, runs: List<Run>, diary: List<Wellbeing>, today: LocalDate): WeekReview {
+        val from = weekOf(today).minusWeeks(1)
+        val until = from.plusDays(6)
+        val scheduled = all.filter { !it.template && !it.recoveryDay && LocalDate.parse(it.date) in from..until }
+        val completed = all.filter { it.status == "done" && !it.template && !it.recoveryDay && it.completedDate() in from..until }
+        val completedRuns = runs.filter { it.status == "done" && !it.demo && it.localDate() in from..until }
+        val wellbeing = diary.filter { LocalDate.parse(it.date) in from..until }
+        return WeekReview(
+            from.toString(), until.toString(),
+            scheduled.size, scheduled.count { it.status == "done" },
+            completed.size, completedRuns.size,
+            completedRuns.sumOf { it.distance.coerceAtLeast(0.0) } / 1000.0,
+            (completed.map { it.completedDate() } + completedRuns.map { it.localDate() }).distinct().size,
+            wellbeing.size, completed.any { it.pain } || wellbeing.any { it.pain }
+        )
+    }
+
     fun options(all: List<Workout>, runs: List<Run>, diary: List<Wellbeing>, today: LocalDate): List<CoachOption> {
         val week = weekOf(today).minusWeeks(1); val previous = week.minusWeeks(1)
         val planned = all.filter { !it.template && !it.recoveryDay && LocalDate.parse(it.date) in week..week.plusDays(6) }

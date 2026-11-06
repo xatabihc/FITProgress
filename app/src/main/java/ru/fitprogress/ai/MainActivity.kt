@@ -117,13 +117,13 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(route != "home") IconButton(onClick = { nav.popBackStack("home", false) }) { Icon(Icons.Default.Home, "На главную") }
                 if(route !in listOf("home", "catalog", "calendar", "running", "running-active", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
-                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress AI · 3.1 RC1", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress AI · 3.1 RC2", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 IconButton(onClick = { if(route != "settings") nav.navigate("settings") }) { Icon(Icons.Default.Settings, "Настройки") }
             }
         }, bottomBar = if(route == "running-active") ({}) else ({
             NavigationBar {
                 listOf(Triple("home", stringResource(R.string.nav_home), Icons.Default.Home), Triple("catalog", stringResource(R.string.nav_catalog), Icons.Default.FitnessCenter), Triple("calendar", stringResource(R.string.nav_plan), Icons.Default.CalendarMonth), Triple("running", stringResource(R.string.nav_run), Icons.Default.DirectionsRun), Triple("stats", stringResource(R.string.nav_progress), Icons.Default.Insights)).forEach { (path, name, icon) ->
-                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = path != "home" } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
+                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { if(route != path) nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = path != "home" } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
                 }
             }
         })) { padding ->
@@ -419,7 +419,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var direction by rememberSaveable { mutableStateOf("Все") }; var selected by remember { mutableStateOf<Program?>(null) }; var startText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }; var error by remember { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }; var levelFilter by rememberSaveable { mutableStateOf("Любой") }; var daysFilter by rememberSaveable { mutableStateOf("Любое число") }; var durationFilter by rememberSaveable { mutableStateOf("Любая") }; var equipmentFilter by rememberSaveable { mutableStateOf("Любое оборудование") }
     var imported by remember { mutableStateOf<ImportedProgram?>(null) }; var importError by remember { mutableStateOf("") }; var importStart by rememberSaveable { mutableStateOf(LocalDate.now().with(java.time.DayOfWeek.MONDAY).toString()) }; var mappingChooser by remember { mutableStateOf<String?>(null) }; var mappingQuery by rememberSaveable { mutableStateOf("") }
-    val mapping = remember { mutableStateMapOf<String, String>() }; val context = LocalContext.current; val scope = rememberCoroutineScope(); val allExercises by vm.exercises.collectAsStateWithLifecycle()
+    var createMissing by remember { mutableStateOf(true) }; val mapping = remember { mutableStateMapOf<String, String>() }; val context = LocalContext.current; val scope = rememberCoroutineScope(); val allExercises by vm.exercises.collectAsStateWithLifecycle()
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch {
         try {
             val content = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { readLimitedUtf8(it, 10_000_000) } ?: error("Не удалось прочитать файл") }
@@ -471,19 +471,34 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 if(p.days.size > 12) Text("…ещё ${p.days.size - 12} занятий")
                 unresolved.forEach { name -> TextButton(onClick = { mappingChooser = name; mappingQuery = name }) { Text("Сопоставить «$name» → выбрать упражнение") } }
                 if(start == null) Text(if(parsedStart == null) "Введите дату в формате ГГГГ-ММ-ДД" else "Дата первой недели должна приходиться на понедельник", color = MaterialTheme.colorScheme.error)
-                if(unresolved.isNotEmpty()) Text("Осталось сопоставить: ${unresolved.size}", color = MaterialTheme.colorScheme.error)
+                if(unresolved.isNotEmpty()) {
+                    Text("Не найдены в каталоге: ${unresolved.size}", color = MaterialTheme.colorScheme.error)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = createMissing, onCheckedChange = { createMissing = it })
+                        Text("Создать отсутствующие как мои упражнения (с исходными названиями)", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
-        }, confirmButton = { TextButton(enabled = start != null && unresolved.isEmpty(), onClick = {
+        }, confirmButton = { TextButton(enabled = start != null && (unresolved.isEmpty() || createMissing), onClick = {
             val monday = start!!; val planId = "imported-${newId()}"
+            val missingExercises = if(createMissing) unresolved.map { name ->
+                val first = p.days.flatMap { it.exercises }.first { it.name == name }
+                Exercise(name = name, category = "Другие", sets = first.sets,
+                    reps = first.reps, seconds = first.seconds, rest = first.restSeconds,
+                    notes = "Добавлено при импорте программы «${p.name}». Проверьте технику и категорию.")
+            } else emptyList()
+            val newlyCreated = missingExercises.associateBy { it.name }
             val slots = p.days.map { d ->
                 val date = monday.plusDays((d.week - 1L) * 7 + d.weekday - 1L)
                 val items = d.exercises.map { e ->
-                    val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } } ?: allExercises.first { it.name.equals(e.name, true) }
+                    val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } }
+                        ?: allExercises.firstOrNull { it.name.equals(e.name, true) }
+                        ?: requireNotNull(newlyCreated[e.name]) { "Упражнение не сопоставлено: ${e.name}" }
                     WorkoutItem(exerciseId = canonical.id, name = canonical.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weightKg, seconds = e.seconds) }, rest = e.restSeconds, muscleGroup = canonical.category)
                 }
                 Workout(name = "${p.name} · неделя ${d.week} · ${d.title.ifBlank { "занятие" }}", date = date.toString(), items = items, program = planId, notes = "Импортирована пользователем · ${p.direction} · ${p.level}")
             }
-            vm.exclusive { vm.repo.saveAll(slots); imported = null; applied() }
+            vm.exclusive { vm.repo.saveImportedProgram(missingExercises, slots); imported = null; applied() }
         }) { Text("Добавить ${p.days.size} занятий") } }, dismissButton = { TextButton(onClick = { imported = null }) { Text("Отмена") } })
         if(mappingChooser != null) AlertDialog(onDismissRequest = { mappingChooser = null }, title = { Text("Сопоставление: ${mappingChooser}") }, text = {
             Column {
@@ -603,8 +618,57 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 if(!loop) { Field(stringResource(R.string.gps_finish_lat), finishLat, { finishLat = it }, true); Field(stringResource(R.string.gps_finish_lon), finishLon, { finishLon = it }, true) }
             }
         } }
-        item { Text(if(pick == "via") "Нажмите на карте, чтобы добавить промежуточную точку" else if(pick == "start") "Выберите старт на карте" else stringResource(R.string.gps_choose_finish_hint), style = MaterialTheme.typography.bodySmall) }
-        item { MapPanel(emptyList(), plannedRoute = route, selectionEnabled = true, markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)), currentLocation = deviceLocation ?: coordinate(startLat, startLon), mapHeight = 360.dp, onMapTap = { point -> setPoint(pick, point); if(pick == "finish") error = "Финиш установлен на карте" else if(pick == "via") error = "Промежуточная точка добавлена" }) }
+        item {
+            Panel {
+                Text("Выберите, что установить на карте", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("start" to "Старт", "finish" to "Финиш", "via" to "Точка +").filter { !loop || it.first != "finish" }.forEach { (role, label) ->
+                        OutlinedButton(
+                            onClick = { pick = role; error = "Выбран режим: $label. Коснитесь карты или используйте прицел." },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if(pick == role) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                            )
+                        ) { Text(label) }
+                    }
+                }
+                Text(
+                    when(pick) {
+                        "start" -> "Выбирается СТАРТ"
+                        "via" -> "Добавляется ПРОМЕЖУТОЧНАЯ ТОЧКА"
+                        else -> "Выбирается ФИНИШ"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "Старт: ${if(coordinate(startLat, startLon) != null) "выбран" else "не выбран"} · " +
+                        "Финиш: ${if(coordinate(finishLat, finishLon) != null) "выбран" else "не выбран"} · " +
+                        "Промежуточных: ${viaText.split(';').count { it.isNotBlank() }}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        item {
+            MapPanel(
+                emptyList(), plannedRoute = route, selectionEnabled = true,
+                markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)),
+                currentLocation = deviceLocation ?: coordinate(startLat, startLon), mapHeight = 360.dp,
+                onMapTap = { point ->
+                    val selectedRole = pick
+                    val viaCountBefore = viaText.split(';').count { it.isNotBlank() }
+                    setPoint(selectedRole, point)
+                    if(selectedRole == "start") {
+                        pick = "finish"
+                        error = "Старт установлен. Теперь выберите финиш."
+                    } else if(selectedRole == "finish") {
+                        error = "Финиш установлен. Нажмите «Построить маршрут»."
+                    } else if(viaText.split(';').count { it.isNotBlank() } > viaCountBefore) {
+                        error = "Промежуточная точка добавлена."
+                    }
+                }
+            )
+        }
         item { Action(if(busy) "Строим по дорожной сети…" else "Построить маршрут", Icons.Default.Route, enabled = !busy) {
             error = ""; route = null; alternatives = emptyList()
             val start = coordinate(startLat, startLon)
@@ -616,7 +680,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                 scope.launch {
                     try {
                         val backend = withContext(Dispatchers.IO) { ValhallaRoutingBackend(profile.routingBackendUrl) }
-                        val built = if(loop) listOf(backend.loop(start, modeValue, (targetKm.toDoubleOrNull()?.times(1000) ?: 0.0))) else backend.route(RouteRequest(listOf(start) + via + requireNotNull(finish), modeValue, alternates = if(via.isEmpty()) 2 else 0))
+                        val built = if(loop) listOf(backend.loop(start, modeValue, (targetKm.replace(',', '.').toDoubleOrNull()?.times(1000) ?: 0.0))) else backend.route(RouteRequest(listOf(start) + via + requireNotNull(finish), modeValue, alternates = if(via.isEmpty()) 2 else 0))
                         alternatives = built; route = built.firstOrNull() ?: throw RoutingException("Сервис не вернул дорожный маршрут", "no_route")
                     } catch(e: Exception) {
                         val category = (e as? RoutingException)?.category ?: e.javaClass.simpleName
@@ -669,7 +733,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             item { if(current?.points.isNullOrEmpty()) { Text(stringResource(R.string.gps_searching), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary); Text(stringResource(R.string.gps_waiting_open_sky), style = MaterialTheme.typography.bodySmall) } else Text(signal, style = MaterialTheme.typography.bodySmall) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_distance), "%.2f км".format((current?.distance ?: 0.0) / 1000), Modifier.weight(1f)); Metric(stringResource(R.string.gps_duration), formatTime(current?.let { RunTimers.elapsed(it, stamp) } ?: 0), Modifier.weight(1f)) } }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_current_pace), current?.takeIf { it.points.size > 1 }?.let { formatPace(Gps.currentPaceAt(it.points, stamp)) } ?: "—", Modifier.weight(1f)); Metric(stringResource(R.string.gps_average_pace), current?.let { formatPace(Gps.pace(it.distance, RunTimers.elapsed(it, stamp))) } ?: "—", Modifier.weight(1f)) } }
-            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_speed), "%.1f км/ч".format(current?.let { Gps.speed(it.distance, RunTimers.elapsed(it, stamp)) } ?: 0.0), Modifier.weight(1f)); Metric(stringResource(R.string.gps_accuracy), current?.points?.lastOrNull()?.let { "±${it.accuracy.toInt()} м" } ?: "—", Modifier.weight(1f)) } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_speed), "%.1f км/ч".format(current?.let { Gps.speed(it.distance, RunTimers.elapsed(it, stamp)) } ?: 0.0), Modifier.weight(1f)); Metric(stringResource(R.string.gps_accuracy), GpsSignalStatus.accuracyLabel(current?.points?.lastOrNull(), stamp), Modifier.weight(1f)) } }
             current?.navigation?.let { route -> item { val progress = current.points.lastOrNull()?.let { RouteMath.progress(route, RouteCoordinate(it.lat, it.lon)) }; Panel { Text("Осталось", style = MaterialTheme.typography.labelLarge); Text(progress?.let { "%.2f км".format(it.remainingMeters / 1000) } ?: stringResource(R.string.gps_searching), style = MaterialTheme.typography.headlineMedium); if(progress?.offRoute == true) Text("Отклонение от маршрута · выполняется проверка GPS", color = MaterialTheme.colorScheme.error) } } }
             item { OutlinedButton(onClick = { controlsLocked = !controlsLocked }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(stringResource(if(controlsLocked) R.string.gps_unlock_controls else R.string.gps_lock_controls)) } }
             if(controlsLocked) item { Text(stringResource(R.string.gps_locked), color = MaterialTheme.colorScheme.primary) }
@@ -819,7 +883,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { OutlinedButton(onClick = { importer.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) }, modifier = Modifier.fillMaxWidth()) { Text("Импорт резервной копии JSON") } }
         item { Text("Импорт добавляет отсутствующие записи. Совпадающие идентификаторы пропускаются; существующая история не перезаписывается. Изображения из галереи на другом телефоне могут быть недоступны — вместо них показывается локальная иллюстрация.", style = MaterialTheme.typography.bodySmall) }
         item { TextButton(onClick = { delete = true }) { Text("Удалить все пользовательские данные", color = MaterialTheme.colorScheme.error) } }
-        item { Text("FitProgress AI 3.1 RC1 · история хранится на устройстве. Карты загружаются из OpenStreetMap; поиск мест и построение маршрута передают выбранные адреса и координаты картографическим сервисам.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("FitProgress AI 3.1 RC2 · история хранится на устройстве. Карты загружаются из OpenStreetMap; поиск мест и построение маршрута передают выбранные адреса и координаты картографическим сервисам.", style = MaterialTheme.typography.bodySmall) }
     }
     if(importData != null) Confirm("Импорт проверен", "В копии $importCount записей. Добавить их? Сначала завершите активные тренировки и пробежки.", { importData = null }) { val b = importData!!; vm.exclusive { vm.repo.restore(b); importData = null; vm.notify("Импорт завершён; совпадающие записи пропущены") } }
     if(delete) Confirm("Удалить все данные?", "Упражнения, планы, результаты, маршруты и профиль будут удалены без возможности отмены. Встроенный каталог останется. Сначала экспортируйте резервную копию.", { delete = false }) {

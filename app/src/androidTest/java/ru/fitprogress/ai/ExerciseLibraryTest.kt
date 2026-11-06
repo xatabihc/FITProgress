@@ -22,6 +22,42 @@ class ExerciseLibraryTest {
         assertTrue(index.filter("hamstrings").isNotEmpty())
         assertTrue(index.filter(category = "Грудь", equipment = "гантели").isNotEmpty())
     }
+    @Test fun russianGymNamesPreserveSourceIdsAndEnglishSearch() = runBlocking {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as FitApp
+        check(app.isolatedTestStorage)
+        val rows = withTimeout(15000) { app.repository.exercises.first { it.size >= 800 } }
+        val byId = rows.associateBy { it.id }
+        assertEquals("Жим штанги лёжа узким хватом", byId["open-Close-Grip_Barbell_Bench_Press"]?.name)
+        assertEquals("Выпады с гантелями", byId["open-Dumbbell_Lunges"]?.name)
+        assertEquals("Скручивания на верхнем блоке", byId["open-Cable_Crunch"]?.name)
+        val index = ExerciseSearchIndex(rows)
+        assertTrue(index.filter("Cable Crunch").any { it.id == "open-Cable_Crunch" })
+        assertTrue(index.filter("жим штанги лёжа узким").any { it.id == "open-Close-Grip_Barbell_Bench_Press" })
+    }
+    @Test fun newRussianGuidesKeepEnglishSearchAndSafetyMetadata() = runBlocking {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as FitApp
+        check(app.isolatedTestStorage)
+        val rows = withTimeout(15000) { app.repository.exercises.first { it.size >= 800 } }
+        val ids = listOf(
+            "Close-Grip_Barbell_Bench_Press", "Dumbbell_Lunges", "Cable_Crunch",
+            "Barbell_Glute_Bridge", "Cable_Chest_Press", "Dumbbell_Floor_Press",
+            "Barbell_Shrug", "Dumbbell_Bicep_Curl",
+            "Cable_Rope_Overhead_Triceps_Extension", "Barbell_Seated_Calf_Raise"
+        )
+        val byId = rows.associateBy { it.id }
+        ids.forEach { sourceId ->
+            val id = "open-$sourceId"
+            val exercise = requireNotNull(byId[id])
+            val metadata = requireNotNull(OpenExerciseLibrary.sourceInfo(id))
+            assertTrue("Russian instruction missing for $sourceId", metadata.localizedGuide)
+            assertTrue("Instruction missing for $sourceId", exercise.technique.length > 40)
+            assertTrue("Typical errors missing for $sourceId", metadata.commonErrors.length > 20)
+            assertTrue("Alternatives missing for $sourceId", metadata.alternatives.length > 15)
+            assertTrue("Original English title missing for $sourceId", metadata.englishName.isNotBlank())
+            assertTrue(ExerciseSearchIndex(rows).filter(metadata.englishName).any { it.id == id })
+        }
+    }
+
     @Test fun strengthFilterIncludesAllStrengthRecordsFromBundledSource() = runBlocking {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as FitApp
         check(app.isolatedTestStorage)

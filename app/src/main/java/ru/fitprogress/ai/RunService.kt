@@ -40,6 +40,7 @@ class RunService : Service() {
     private val events = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private val repo get() = (application as FitApp).repository
     private var client: FusedLocationProviderClient? = null
+    private var usingPlatformGps = false
     private val locations get() = getSystemService(LocationManager::class.java)
     private val platformListener = object : LocationListener {
         override fun onLocationChanged(location: Location) { acceptLocations(listOf(location)) }
@@ -55,7 +56,7 @@ class RunService : Service() {
     private var wakeUntil = 0L
     private var wakeLock: PowerManager.WakeLock? = null
     private val callback = object : LocationCallback() {
-        override fun onLocationResult(result: LocationResult) { acceptLocations(result.locations) }
+        override fun onLocationResult(result: LocationResult) { if(!usingPlatformGps) acceptLocations(result.locations) }
         override fun onLocationAvailability(availability: LocationAvailability) { if(!availability.isLocationAvailable) signal.value = "GPS недоступен · ожидаем сигнал" }
     }
     private fun acceptLocations(fixes: List<Location>) {
@@ -210,21 +211,50 @@ class RunService : Service() {
         if(gms) {
             val fused = LocationServices.getFusedLocationProviderClient(this); client = fused
             val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L).setMinUpdateIntervalMillis(1000).setMaxUpdateDelayMillis(5000).setWaitForAccurateLocation(true).build()
+            usingPlatformGps = false
             fused.requestLocationUpdates(request, callback, Looper.getMainLooper()).addOnFailureListener { error -> events.trySend {
-                if(current?.status == "active") {
-                    Log.e("FitRunStart", "Fused request failed", error)
-                    pauseInternal(); launch.fail(if(error is SecurityException) RunLaunchError.PERMISSION else RunLaunchError.SUBSCRIPTION, error.javaClass.simpleName)
-                    signal.value = launch.state.value.error!!.message
+                if(current?.status == "active" && !usingPlatformGps) {
+                    Log.w("FitRunStart", "Fused request failed; checking Android GPS fallback", error)
+                    val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                    val gpsPresent = locations.allProviders.contains(LocationManager.GPS_PROVIDER)
+                    val gpsEnabled = gpsPresent && locations.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                    if(GpsFallbackPolicy.canUsePlatformGps(hasFine, gpsPresent, gpsEnabled, usingPlatformGps)) {
+                        try {
+                            client?.removeLocationUpdates(callback)
+                            client = null
+                            subscribePlatformGps()
+                            signal.value = "Системный GPS Android подключён · запись продолжается"
+                            Log.i("FitRunStart", "Switched to platform GPS without pausing run")
+                        } catch(fallbackError: Exception) {
+                            Log.e("FitRunStart", "Android GPS fallback failed", fallbackError)
+                            pauseInternal()
+                            launch.fail(if(fallbackError is SecurityException) RunLaunchError.PERMISSION else RunLaunchError.SUBSCRIPTION, fallbackError.javaClass.simpleName)
+                            signal.value = launch.state.value.error!!.message
+                        }
+                    } else {
+                        pauseInternal()
+                        launch.fail(if(!hasFine) RunLaunchError.PERMISSION else if(!gpsPresent || !gpsEnabled) RunLaunchError.NO_PROVIDER else RunLaunchError.SUBSCRIPTION, error.javaClass.simpleName)
+                        signal.value = launch.state.value.error!!.message
+                    }
                 }
             } }
         } else {
-            require(locations.allProviders.contains(LocationManager.GPS_PROVIDER)) { "GPS_PROVIDER missing" }
-            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, platformListener, Looper.getMainLooper())
+            subscribePlatformGps()
         }
+    }
+    private fun subscribePlatformGps() {
+        if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Для системного GPS требуется разрешение точной геолокации")
+        }
+        require(locations.allProviders.contains(LocationManager.GPS_PROVIDER) && locations.isProviderEnabled(LocationManager.GPS_PROVIDER)) { "GPS_PROVIDER unavailable" }
+        locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, platformListener, Looper.getMainLooper())
+        usingPlatformGps = true
     }
     private fun removeUpdates() {
         try { client?.removeLocationUpdates(callback) } catch(e: SecurityException) { Log.w("FitRunStart", "Permission revoked during fused cleanup", e) }
         try { locations.removeUpdates(platformListener) } catch(e: SecurityException) { Log.w("FitRunStart", "Permission revoked during GPS cleanup", e) }
+        usingPlatformGps = false
+        client = null
     }
     private fun acquireRunWakeLock() {
         val now = android.os.SystemClock.elapsedRealtime()

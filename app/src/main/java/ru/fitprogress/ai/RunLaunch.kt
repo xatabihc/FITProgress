@@ -16,6 +16,19 @@ enum class RunLaunchError(val message: String) {
 data class RunLaunchState(val phase: RunLaunchPhase = RunLaunchPhase.IDLE, val error: RunLaunchError? = null, val diagnostic: String = "", val attempt: Long = 0) {
     val pending get() = phase == RunLaunchPhase.PERMISSION || phase == RunLaunchPhase.STARTING
 }
+/** Whether a failed Fused Location subscription may safely switch to the Android GPS provider. */
+object GpsFallbackPolicy {
+    fun canUsePlatformGps(finePermission: Boolean, gpsPresent: Boolean, gpsEnabled: Boolean, alreadyUsingPlatform: Boolean): Boolean =
+        finePermission && gpsPresent && gpsEnabled && !alreadyUsingPlatform
+}
+
+/** Accuracy must never appear current when the last recorded point is stale. */
+object GpsSignalStatus {
+    fun accuracyLabel(last: GeoPoint?, now: ClockStamp): String =
+        if(last == null || !Gps.valid(last) || Gps.age(last, now) !in 0L..20_000L) "Нет свежего GPS"
+        else "±${last.accuracy.toInt()} м"
+}
+
 /** Shared launch handshake; no GPS coordinates or private history in diagnostic messages. */
 class RunLaunchController {
     private val attempts = java.util.concurrent.atomic.AtomicLong()

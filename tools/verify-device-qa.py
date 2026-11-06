@@ -25,11 +25,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--apk', type=Path)
+    parser.add_argument('--test-apk', type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     adb = ['adb', '-s', args.serial]
-    app = ROOT / 'app/build/outputs/apk/debug/app-debug.apk'
-    tests = ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+    app = args.apk or ROOT / 'app/build/outputs/apk/debug/app-debug.apk'
+    tests = args.test_apk or ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
     def metadata(path):
         return command([BT / 'aapt2', 'dump', 'badging', path])
     def signer(path):

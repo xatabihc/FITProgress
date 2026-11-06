@@ -1,0 +1,29 @@
+{
+  "unit": {
+    "tests": 170,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "Error": 0,
+    "Warning": 62,
+    "Information": 1
+  },
+  "lint_ids": {
+    "UnusedAttribute": 1,
+    "GradleDependency": 14,
+    "ModifierParameter": 2,
+    "LogNotTimber": 26,
+    "DataExtractionRules": 1,
+    "KaptUsageInsteadOfKsp": 1,
+    "AutoboxingStateCreation": 1,
+    "UnusedResources": 14,
+    "UseKtx": 3
+  },
+  "clean_build": true,
+  "android_passed": 38,
+  "android_skipped": 2,
+  "android_failed": 0,
+  "qa_update_persistence_passed": true
+}

@@ -96,8 +96,20 @@ private fun goalUnit(kind: String) = when(kind) { "distance" -> "км"; "pace" -
 @Composable fun CoachScreen(vm: FitViewModel, manual: () -> Unit) {
     val workouts by vm.workouts.collectAsStateWithLifecycle(); val runs by vm.runs.collectAsStateWithLifecycle(); val diary by vm.wellbeing.collectAsStateWithLifecycle()
     val engine = remember { AdaptiveCoach() }; val today = LocalDate.now(); var draft by remember { mutableStateOf<Pair<CoachPreview, Backup>?>(null) }
+    val review = remember(workouts, runs, diary, today) { engine.review(workouts, runs, diary, today) }
     Page {
         item { Title("Adaptive Coach", "Анализ недели с ${weekOf(today).minusWeeks(1)}; план на следующую неделю") }
+        item {
+            Panel {
+                Text("Прошлая неделя · ${review.from} — ${review.until}", style = MaterialTheme.typography.titleLarge)
+                Text("Запланировано занятий: ${review.plannedSessions}; отмечено выполненными: ${review.completedPlannedSessions}.")
+                Text("Фактически завершено: ${review.completedSessions} тренировок и ${review.completedRuns} пробежек.")
+                Text("Пробег: %.2f км · активных дней: ${review.activeDays}".format(review.runningKm))
+                Text("Записей самочувствия: ${review.diaryEntries}")
+                if(review.painReported) Text("Отмечена боль. Автоматическое увеличение нагрузки ограничено.", color = MaterialTheme.colorScheme.error)
+                Text("Отчёт основан только на сохранённых результатах. Рекомендации можно просмотреть и отклонить.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         items(engine.options(workouts, runs, diary, today), key = { it.id }) { option -> Panel {
             Text(option.title, style = MaterialTheme.typography.titleLarge); Text(option.metrics); Text(option.reason)
             Action(if(option.id == "manual") "Открыть календарь" else "Просмотреть разницу", Icons.Default.Preview, option.enabled) {

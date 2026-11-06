@@ -153,7 +153,7 @@ class LocalRecommendations : RecommendationEngine {
         w.copy(items = w.items.map { item -> item.copy(sets = item.sets.map { s -> s.copy(weight = (s.weight * factor * 10).roundToInt() / 10.0, reps = if (s.weight == 0.0 && s.seconds == 0 && s.distanceMeters == 0.0 && factor != 1.0) max(1, if (factor > 1) s.reps + 1 else (s.reps * factor).roundToInt()) else s.reps) }) })
     }
 }
-data class Program(val id: String, val name: String, val direction: String, val level: String, val weeks: Int, val weekdays: List<Int>, val exerciseNames: List<String>, val reps: Int, val sets: Int, val workSeconds: Int = 0, val restSeconds: Int = 60, val advice: String = "Разминка 5–10 минут. Выполняйте без боли, контролируйте технику. Между занятиями — восстановление. Это общий план, а не медицинская рекомендация.", val dayExercises: List<List<String>> = emptyList(), val progression: String = "Сначала закрепите технику. Повышайте только один параметр после лёгкого выполнения всех подходов.")
+data class Program(val id: String, val name: String, val direction: String, val level: String, val weeks: Int, val weekdays: List<Int>, val exerciseNames: List<String>, val reps: Int, val sets: Int, val workSeconds: Int = 0, val restSeconds: Int = 60, val advice: String = "Разминка 5–10 минут. Выполняйте без боли, контролируйте технику. Между занятиями — восстановление. Это общий план, а не медицинская рекомендация.", val dayExercises: List<List<String>> = emptyList(), val progression: String = "Сначала закрепите технику. Повышайте только один параметр после лёгкого выполнения всех подходов.", val repsIncrement: Int = 0, val progressionEveryWeeks: Int = 0, val deloadWeek: Int = 0)
 object Catalog {
     val exercises: List<Exercise> = listOf(
         Triple("Отжимания", "Грудь", "Ладони под плечами. Сохраняйте прямую линию корпуса, опускайтесь подконтрольно, выдох при подъёме."),
@@ -186,6 +186,54 @@ object Catalog {
         Program("Растяжка-0", "Мягкая подвижность · 3 дня", "Растяжка", "Начинающий", 4, listOf(1,3,5), listOf("Растяжка задней поверхности бедра", "Ходьба"), 1, 1, workSeconds = 30, restSeconds = 20, advice = "Двигайтесь в безболезненном диапазоне, дышите свободно. Это общая практика мобильности; не пружиньте в крайнем положении и остановитесь при боли."),
         Program("Велоспорт-0", "Велосипед · спокойная база", "Велоспорт", "Начинающий", 6, listOf(2,4,6), listOf("Велосипед", "Растяжка задней поверхности бедра"), 1, 1, workSeconds = 900, restSeconds = 0, advice = "Начинайте с 15 минут лёгкого вращения педалей, сохраняйте разговорное дыхание. Увеличивайте длительность только при хорошем восстановлении."),
         Program("Смешанные тренировки-0", "Смешанный план · 3 дня", "Смешанные тренировки", "Любитель", 6, listOf(1,3,6), fullA, 8, 2, advice = easyAdvice, dayExercises = listOf(fullA, listOf("Ходьба", "Лёгкий бег"), fullB)),
+        Program("home-strength-2", "Дом · укрепление всего тела", "Домашние тренировки", "Новичок", 6, listOf(1,4),
+            listOf("Приседания", "Отжимания", "Планка"), 6, 2, restSeconds = 90, advice = easyAdvice,
+            dayExercises = listOf(listOf("Приседания", "Отжимания", "Планка"), listOf("Выпады назад", "Отжимания", "Планка")),
+            progression = "Недели 1–2: 6 повторов; 3–4: 7; 5: 8. Последняя неделя разгрузочная: один подход вместо двух. При плохом восстановлении повторите предыдущую неделю.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 6),
+        Program("gym-foundation-3", "Зал · сила и техника, 3 дня", "Тренажёрный зал", "Начинающий", 8, listOf(1,3,5),
+            listOf("Приседания", "Жим гантелей лёжа", "Тяга гантели в наклоне"), 8, 3, restSeconds = 120, advice = easyAdvice,
+            dayExercises = listOf(listOf("Приседания", "Жим гантелей лёжа", "Тяга гантели в наклоне"), listOf("Выпады назад", "Жим гантелей стоя", "Планка"), listOf("Приседания", "Подтягивания", "Сгибания рук")),
+            progression = "Каждые две недели прибавляйте по одному повтору, только если все подходы выполняются контролируемо. Неделя 8 — разгрузочная (2 подхода). Вес подбирайте индивидуально.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 8),
+        Program("calisthenics-steady-2", "Калистеника · устойчивый прогресс", "Калистеника", "Любитель", 8, listOf(2,5),
+            listOf("Отжимания", "Подтягивания", "Планка"), 6, 3, restSeconds = 120, advice = easyAdvice,
+            dayExercises = listOf(listOf("Отжимания", "Подтягивания", "Планка"), listOf("Выпады назад", "Подтягивания", "Отжимания")),
+            progression = "Недели 1–2: 6 повторов, далее по одному повтору каждые 2 недели при контролируемой технике. Для подтягиваний допустима резиновая помощь. Неделя 8 — разгрузочная.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 8),
+        Program("functional-steady-3", "ОФП · регулярная нагрузка", "ОФП", "Любитель", 6, listOf(1,3,6),
+            listOf("Приседания", "Отжимания", "Планка"), 8, 2, restSeconds = 90, advice = easyAdvice,
+            dayExercises = listOf(listOf("Приседания", "Отжимания", "Планка"), listOf("Выпады назад", "Тяга гантели в наклоне", "Ходьба"), listOf("Приседания", "Берпи без прыжка", "Растяжка задней поверхности бедра")),
+            progression = "Недели 1–2: 8 повторов; 3–4: 9; 5: 10. На неделе 6 уменьшите число подходов до одного и оцените восстановление.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 6),
+        Program("gym-upper-lower-advanced", "Зал · верх / низ, продвинутый", "Тренажёрный зал", "Продвинутый", 8, listOf(1,2,4,5),
+            listOf("Жим гантелей лёжа", "Тяга гантели в наклоне", "Приседания"), 6, 4, restSeconds = 150,
+            advice = easyAdvice + " Программа подходит только при устойчивом владении техникой. Не выполняйте максимальные попытки без страховки.",
+            dayExercises = listOf(
+                listOf("Жим гантелей лёжа", "Тяга гантели в наклоне", "Жим гантелей стоя"),
+                listOf("Приседания", "Выпады назад", "Планка"),
+                listOf("Подтягивания", "Отжимания", "Сгибания рук"),
+                listOf("Приседания", "Выпады назад", "Растяжка задней поверхности бедра")
+            ), progression = "Добавляйте по одному повтору каждые две недели только при сохранении запаса в 2 повтора. Неделя 8 — разгрузочная, 3 подхода вместо 4.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 8),
+        Program("calisthenics-advanced-control", "Калистеника · техника и объём", "Калистеника", "Продвинутый", 8, listOf(1,3,6),
+            listOf("Подтягивания", "Отжимания", "Планка"), 6, 3, restSeconds = 120,
+            advice = easyAdvice + " Используйте регрессию упражнения, если теряете контроль движения.",
+            dayExercises = listOf(
+                listOf("Подтягивания", "Отжимания", "Планка"),
+                listOf("Выпады назад", "Приседания", "Отжимания"),
+                listOf("Подтягивания", "Планка", "Приседания")
+            ), progression = "При комфортном выполнении каждые две недели добавляйте повтор без ухудшения техники. Неделя 8 — разгрузочная, 2 подхода.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 8),
+        Program("home-advanced-strength", "Дом · продвинутая силовая база", "Домашние тренировки", "Продвинутый", 8, listOf(1,3,5),
+            listOf("Приседания", "Отжимания", "Тяга гантели в наклоне"), 8, 3, restSeconds = 120,
+            advice = easyAdvice,
+            dayExercises = listOf(
+                listOf("Приседания", "Отжимания", "Планка"),
+                listOf("Выпады назад", "Жим гантелей стоя", "Тяга гантели в наклоне"),
+                listOf("Жим гантелей лёжа", "Приседания", "Растяжка задней поверхности бедра")
+            ), progression = "Добавляйте по одному повтору раз в две недели при хорошем самочувствии; последняя неделя облегчённая с 2 подходами.",
+            repsIncrement = 1, progressionEveryWeeks = 2, deloadWeek = 8),
         Program("running-0", "Первые шаги в беге", "Бег", "Новичок", 6, listOf(2,4,6), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 6, 60, 90, runAdvice, progression = "Шесть чередований: 60 секунд лёгкого бега и 90 секунд ходьбы. Каждую неделю добавляется не более 10 секунд к беговому интервалу; можно повторить неделю."),
         Program("running-1", "Ходьба и лёгкий бег", "Бег", "Новичок", 6, listOf(2,5), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 8, 90, 90, runAdvice),
         Program("running-2", "Подготовка к непрерывному лёгкому бегу", "Бег", "Начинающий", 8, listOf(2,4,6), listOf("Ходьба", "Лёгкий бег", "Ходьба"), 1, 5, 180, 90, runAdvice),
@@ -202,7 +250,11 @@ object Catalog {
         val direction = id.substringBeforeLast('-', "")
         return if(direction in legacyDirections && level != null && level in 0..2) "$direction · сохранённый план (${listOf("начальный", "средний", "продвинутый")[level]})" else id
     }
-    fun schedule(p: Program, start: LocalDate): List<Workout> = (0 until p.weeks * 7).mapNotNull { day ->
+    fun schedule(p: Program, start: LocalDate): List<Workout> {
+        require(p.repsIncrement in 0..4 && p.progressionEveryWeeks in 0..52)
+        require(p.repsIncrement == 0 || p.progressionEveryWeeks > 0)
+        require(p.deloadWeek in 0..p.weeks)
+        return (0 until p.weeks * 7).mapNotNull { day ->
         val date = start.plusDays(day.toLong())
         if (date.dayOfWeek.value !in p.weekdays) null else {
             val week = day / 7
@@ -214,10 +266,16 @@ object Catalog {
             } else {
                 val trainingDayIndex = p.weekdays.indexOf(date.dayOfWeek.value).coerceAtLeast(0)
                 val names = p.dayExercises.getOrNull(trainingDayIndex) ?: p.exerciseNames
-                names.mapNotNull { name -> exercises.find { it.name == name } }.map { e -> Training.item(e).copy(sets = List(p.sets) { SetEntry(reps = p.reps, seconds = if(e.seconds > 0) max(e.seconds, p.workSeconds) else 0) }, rest = p.restSeconds) }
+                names.mapNotNull { name -> exercises.find { it.name == name } }.map { e ->
+                    val progressionSteps = if(p.progressionEveryWeeks > 0) week / p.progressionEveryWeeks else 0
+                    val targetReps = p.reps + progressionSteps * p.repsIncrement
+                    val targetSets = if(p.deloadWeek == week + 1) (p.sets - 1).coerceAtLeast(1) else p.sets
+                    Training.item(e).copy(sets = List(targetSets) { SetEntry(reps = targetReps, seconds = if(e.seconds > 0) max(e.seconds, p.workSeconds) else 0) }, rest = p.restSeconds)
+                }
             }
             Workout(name = "${p.name} · неделя ${week + 1}", date = date.toString(), items = items, program = p.id, notes = p.advice)
         }
+    }
     }
 }
 fun formatTime(ms: Long): String { val s = max(0, ms / 1000); return "%02d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) }

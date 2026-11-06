@@ -11,8 +11,8 @@ android {
         applicationId = "ru.fitprogress.ai"
         minSdk = 29
         targetSdk = 35
-        versionCode = 7
-        versionName = "3.1-rc1"
+        versionCode = 8
+        versionName = "3.1-rc2"
         manifestPlaceholders["appLabel"] = "FitProgress AI"
         testInstrumentationRunner = "ru.fitprogress.ai.FitTestRunner"
     }

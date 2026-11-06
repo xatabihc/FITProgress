@@ -54,6 +54,23 @@ class Repository(private val db: FitDatabase, private val context: Context) {
     suspend fun deleteExercise(id: String) = storage { require(!id.startsWith("builtin-")); dao.deleteExercise(id) } // Sessions retain a complete name/sets snapshot.
     suspend fun save(w: Workout) = storage { BackupCodec.validateWorkout(w); val old = dao.workout(w.id)?.let { gson.fromJson(it.payload, Workout::class.java) }; require(w.status == "planned" && (old == null || old.status == "planned")) { "Активную или завершённую историю нельзя перезаписывать" }; dao.putWorkout(WorkoutRow(w.id, gson.toJson(w))) }
     suspend fun saveAll(ws: List<Workout>) = storage { db.withTransaction { ws.forEach { BackupCodec.validateWorkout(it); require(dao.workout(it.id) == null); dao.putWorkout(WorkoutRow(it.id, gson.toJson(it))) } } }
+    /** Import user exercises and planned sessions in one transaction; existing history is never overwritten. */
+    suspend fun saveImportedProgram(newExercises: List<Exercise>, sessions: List<Workout>) = storage {
+        require(newExercises.map { it.id }.distinct().size == newExercises.size)
+        require(sessions.map { it.id }.distinct().size == sessions.size)
+        db.withTransaction {
+            newExercises.forEach { exercise ->
+                BackupCodec.validateExercise(exercise)
+                require(!exercise.builtIn)
+                dao.putExercise(ExerciseRow(exercise.id, gson.toJson(exercise)))
+            }
+            sessions.forEach { session ->
+                BackupCodec.validateWorkout(session)
+                require(session.status == "planned" && dao.workout(session.id) == null)
+                dao.putWorkout(WorkoutRow(session.id, gson.toJson(session)))
+            }
+        }
+    }
     suspend fun deleteWorkout(id: String) = storage { val w = dao.workout(id)?.let { gson.fromJson(it.payload, Workout::class.java) }; require(w?.status == "planned"); dao.deleteWorkout(id) }
     suspend fun updateWorkout(id: String, change: (Workout) -> Workout) = storage {
         dao.workout(id)?.let { row -> val w = gson.fromJson(row.payload, Workout::class.java); if(w.status != "done") { val next = SessionEdits.cancelMissingStage(change(w)); require(next.id == id) { "Идентификатор тренировки нельзя менять" }; BackupCodec.validateWorkout(next); if(next.status == "active") require(dao.allWorkouts().none { it.id != id && gson.fromJson(it.payload, Workout::class.java).status in listOf("active", "paused") }) { "Сначала завершите текущую тренировку" }; dao.putWorkout(WorkoutRow(id, gson.toJson(next))) } }
