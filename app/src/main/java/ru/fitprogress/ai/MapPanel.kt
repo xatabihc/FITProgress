@@ -45,12 +45,16 @@ private object MapHttp {
     points: List<GeoPoint>, plannedRoute: NavigationRoute? = null, selectionEnabled: Boolean = false,
     markers: List<RouteCoordinate> = emptyList(), currentLocation: RouteCoordinate? = points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) },
     followUser: Boolean = false, mapHeight: Dp = 300.dp,
+    fullscreen: Boolean = false, modifier: Modifier = Modifier,
+    initialCenter: RouteCoordinate? = null,
+    onCameraIdle: (RouteCoordinate) -> Unit = {},
     onMapTap: (RouteCoordinate) -> Unit = {}
 ) {
     val context = LocalContext.current; val owner = LocalLifecycleOwner.current
     var error by remember { mutableStateOf("") }; var map by remember { mutableStateOf<MapLibreMap?>(null) }; var styleLoaded by remember { mutableStateOf(false) }
     var cameraInitialized by remember { mutableStateOf(false) }
     val selection = rememberUpdatedState(selectionEnabled); val tap = rememberUpdatedState(onMapTap)
+    val cameraIdle = rememberUpdatedState(onCameraIdle)
     var mapReady by remember { mutableStateOf(false) }
     val mapView = remember {
         MapLibre.getInstance(context)
@@ -74,6 +78,11 @@ private object MapHttp {
         mapView.getMapAsync { m ->
             map = m
             mapReady = true
+            m.addOnCameraIdleListener {
+                m.cameraPosition.target?.let { center ->
+                    cameraIdle.value(RouteCoordinate(center.latitude, center.longitude))
+                }
+            }
             m.addOnMapClickListener { point ->
                 if(selection.value) {
                     tap.value(RouteCoordinate(point.latitude, point.longitude))
@@ -132,10 +141,11 @@ private object MapHttp {
         }
     }
     // Marker updates must not steal the camera while the user pans to choose a start/finish.
-    LaunchedEffect(currentLocation, map, styleLoaded) {
+    LaunchedEffect(initialCenter, currentLocation, map, styleLoaded) {
         val m = map ?: return@LaunchedEffect
-        if(styleLoaded && !cameraInitialized && plannedRoute == null && points.isEmpty() && currentLocation != null) {
-            m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLocation.latitude, currentLocation.longitude), 15.0))
+        val center = initialCenter ?: currentLocation
+        if(styleLoaded && !cameraInitialized && plannedRoute == null && points.isEmpty() && center != null) {
+            m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(center.latitude, center.longitude), 15.0))
             cameraInitialized = true
         }
     }
@@ -144,7 +154,32 @@ private object MapHttp {
         val location = currentLocation ?: return@LaunchedEffect
         if(followUser && styleLoaded) m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(location.latitude, location.longitude), 17.0), 450)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    if(fullscreen) {
+        Box(modifier.fillMaxSize()) {
+            AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+            if(selectionEnabled) {
+                Text("+", modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineLarge)
+                Button(
+                    onClick = {
+                        val center = map?.cameraPosition?.target
+                        if(center != null && mapReady) tap.value(RouteCoordinate(center.latitude, center.longitude))
+                    },
+                    enabled = mapReady,
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 16.dp).heightIn(min = 56.dp)
+                ) { Text("Выбрать точку по прицелу") }
+            }
+            if(error.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(error, modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
+        }
+    } else Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.fillMaxWidth().height(mapHeight)) {
             AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
             if(selectionEnabled) {
