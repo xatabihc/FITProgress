@@ -64,7 +64,8 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
         com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
             .getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, token.token)
             .addOnSuccessListener { result.complete(it) }.addOnFailureListener { result.complete(null) }
-        val fix = withTimeoutOrNull(12_000) { result.await() }?.takeIf { it.hasAccuracy() && it.accuracy <= 120f }
+        val fix = try { withTimeoutOrNull(12_000) { result.await() } } finally { token.cancel() }
+            ?.takeIf { it.hasAccuracy() && it.accuracy <= 120f && android.os.SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos in 0L..120_000_000_000L }
         if(fix != null) return fix
     }
     if(Build.VERSION.SDK_INT >= 30) {
@@ -72,10 +73,11 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
         for(provider in listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)) {
             if(!manager.isProviderEnabled(provider)) continue
             val result = CompletableDeferred<android.location.Location?>()
-            try { manager.getCurrentLocation(provider, android.os.CancellationSignal(), context.mainExecutor) { result.complete(it) } }
+            val cancellation = android.os.CancellationSignal()
+            try { manager.getCurrentLocation(provider, cancellation, context.mainExecutor) { result.complete(it) } }
             catch(_: SecurityException) { return null }
             catch(_: IllegalArgumentException) { continue }
-            val fix = withTimeoutOrNull(8_000) { result.await() }
+            val fix = try { withTimeoutOrNull(8_000) { result.await() } } finally { cancellation.cancel() }
             if(fix?.hasAccuracy() == true && fix.accuracy <= 120f) return fix
         }
     }
@@ -89,8 +91,8 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
 @Composable fun FitProgress(vm: FitViewModel = viewModel()) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     val accent = when(profile.accent) { "cyan" -> Color(0xFF68D8F6); "orange" -> Color(0xFFFFB45B); else -> Accent }
-    val dark = darkColorScheme(primary = accent, onPrimary = Color(0xFF162309), background = Color(0xFF101410), surface = Color(0xFF191F19), surfaceVariant = Color(0xFF283028))
-    val light = lightColorScheme(primary = when(profile.accent) { "cyan" -> Color(0xFF00687B); "orange" -> Color(0xFF8B5000); else -> Color(0xFF3C6A12) }, background = Color(0xFFF5F8F1), surface = Color.White)
+    val dark = darkColorScheme(primary = accent, onPrimary = Color(0xFF162309), background = Color(0xFF101410), surface = Color(0xFF191F19), surfaceVariant = Color(0xFF283028), secondaryContainer = Color(0xFF304127), onSecondaryContainer = Color(0xFFDBEBCD), surfaceContainer = Color(0xFF191F19), surfaceContainerHigh = Color(0xFF222B22), surfaceContainerHighest = Color(0xFF283028))
+    val light = lightColorScheme(primary = when(profile.accent) { "cyan" -> Color(0xFF00687B); "orange" -> Color(0xFF8B5000); else -> Color(0xFF3C6A12) }, background = Color(0xFFF5F8F1), surface = Color.White, secondaryContainer = Color(0xFFDAEACD), onSecondaryContainer = Color(0xFF172B0D), surfaceContainer = Color(0xFFEDF2E8), surfaceContainerHigh = Color(0xFFE5EDDE), surfaceContainerHighest = Color(0xFFDDE7D5))
     MaterialTheme(colorScheme = if(profile.light) light else dark, typography = Typography()) {
         val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"
         val sessions by vm.workouts.collectAsStateWithLifecycle()
@@ -113,14 +115,15 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
         LaunchedEffect(Unit) { WorkoutTimerService.failure.collect { if(it != null) snackbar.showSnackbar(it) } }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if(route != "home") IconButton(onClick = { nav.popBackStack("home", false) }) { Icon(Icons.Default.Home, "На главную") }
                 if(route !in listOf("home", "catalog", "calendar", "running", "running-active", "stats")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
-                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress AI · 3.0", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+                Column(Modifier.weight(1f)) { Text("FITPROGRESS", fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 18.sp); Text("FitProgress AI · 3.1 RC1", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 IconButton(onClick = { if(route != "settings") nav.navigate("settings") }) { Icon(Icons.Default.Settings, "Настройки") }
             }
         }, bottomBar = if(route == "running-active") ({}) else ({
             NavigationBar {
                 listOf(Triple("home", stringResource(R.string.nav_home), Icons.Default.Home), Triple("catalog", stringResource(R.string.nav_catalog), Icons.Default.FitnessCenter), Triple("calendar", stringResource(R.string.nav_plan), Icons.Default.CalendarMonth), Triple("running", stringResource(R.string.nav_run), Icons.Default.DirectionsRun), Triple("stats", stringResource(R.string.nav_progress), Icons.Default.Insights)).forEach { (path, name, icon) ->
-                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
+                    NavigationBarItem(selected = route == path || (path == "running" && route == "running-active"), onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = path != "home" } }, icon = { Icon(icon, name) }, label = if(androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.4f) null else { { Text(name, fontSize = 10.sp) } })
                 }
             }
         })) { padding ->
@@ -132,13 +135,14 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
                     composable("workout/{id}") { WorkoutScreen(vm, it.arguments?.getString("id") ?: "", { nav.popBackStack() }) }
                     composable("calendar") { CalendarScreen(vm, { nav.navigate("workout/$it") }) }
                     composable("programs") { ProgramsScreen(vm, { nav.navigate("calendar") }, { nav.navigate("plan/$it") }) }
-                    composable("plan/{id}") { PlanEditorScreen(vm, it.arguments?.getString("id") ?: "") }
+                    composable("plan/{id}") { PlanEditorScreen(vm, it.arguments?.getString("id") ?: "", { copyId -> nav.navigate("plan/$copyId") }) }
                     composable("running") { RunningScreen(vm, { nav.navigate("run/$it") }, { nav.navigate("route-builder") }, { nav.navigate("running-active") { launchSingleTop = true } }) }
                     composable("running-active") { RunningScreen(vm, { nav.navigate("run/$it") }, { nav.navigate("route-builder") }, {}, dedicated = true) }
-                    composable("route-builder") { RouteBuilderScreen(vm, { nav.navigate("running") }) }
+                    composable("route-builder") { RouteBuilderScreen(vm, { if(!nav.popBackStack("running", false)) nav.navigate("running") { popUpTo("home"); launchSingleTop = true } }) }
                     composable("run/{id}") { RunDetail(vm, it.arguments?.getString("id") ?: "") }
                     composable("stats") { StatsScreen(vm, { nav.navigate("analysis") }) }
-                    composable("settings") { SettingsScreen(vm) }
+                    composable("settings") { SettingsScreen(vm) { nav.navigate("import-workouts") } }
+                    composable("import-workouts") { ImportScreen(vm) }
                     composable("recommendations") { CoachScreen(vm, { nav.navigate("calendar") }) }
                     composable("goals") { GoalsScreen(vm) }
                     composable("wellbeing") { WellbeingScreen(vm) }
@@ -153,7 +157,7 @@ private suspend fun resolveCurrentLocation(context: android.content.Context): an
 @Composable fun Title(text: String, subtitle: String = "") { Column { Text(text, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); if(subtitle.isNotBlank()) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium) } }
 @Composable fun Panel(content: @Composable ColumnScope.() -> Unit) { Card(Modifier.fillMaxWidth().animateContentSize(), shape = RoundedCornerShape(24.dp)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content) } }
 @Composable fun Action(text: String, icon: ImageVector = Icons.Default.Add, enabled: Boolean = true, click: () -> Unit) { Button(onClick = click, enabled = enabled, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(14.dp)) { Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text(text) } }
-@Composable fun Metric(label: String, value: String, modifier: Modifier = Modifier) { Column(modifier.padding(vertical = 4.dp)) { Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis); Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) } }
+@Composable fun Metric(label: String, value: String, modifier: Modifier = Modifier) { Column(modifier.padding(vertical = 4.dp)) { Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary); Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) } }
 @Composable fun Empty(text: String) { Panel { Icon(Icons.Default.SportsGymnastics, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)); Text(text) } }
 @Composable fun Field(label: String, value: String, change: (String) -> Unit, numeric: Boolean = false, lines: Int = 1, modifier: Modifier = Modifier.fillMaxWidth()) { OutlinedTextField(value = value, onValueChange = change, label = { Text(label) }, modifier = modifier, singleLine = lines == 1, minLines = lines, keyboardOptions = KeyboardOptions(keyboardType = if(numeric) KeyboardType.Decimal else KeyboardType.Text)) }
 @Composable fun Choice(values: List<String>, selected: String, onSelect: (String) -> Unit) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { values.forEach { FilterChip(selected = it == selected, onClick = { onSelect(it) }, label = { Text(it) }) } } }
@@ -396,7 +400,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { Choice(listOf("День", "Неделя", "Месяц"), mode) { mode = it } }
         item { Field("Дата, ГГГГ-ММ-ДД", dateText, { dateText = it }) }
         if(runCatching { LocalDate.parse(dateText) }.isFailure) item { Text("Введите корректную дату", color = MaterialTheme.colorScheme.error) }
-        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { dateText = when(mode) { "Месяц" -> date.minusMonths(1); "День" -> date.minusDays(1); else -> date.minusWeeks(1) }.toString() }) { Text("Назад") }; OutlinedButton(onClick = { dateText = LocalDate.now().toString() }) { Text("Сегодня") }; OutlinedButton(onClick = { dateText = when(mode) { "Месяц" -> date.plusMonths(1); "День" -> date.plusDays(1); else -> date.plusWeeks(1) }.toString() }) { Text("Вперёд") } } }
+        item { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { dateText = when(mode) { "Месяц" -> date.minusMonths(1); "День" -> date.minusDays(1); else -> date.minusWeeks(1) }.toString() }) { Text("Назад") }; OutlinedButton(onClick = { dateText = LocalDate.now().toString() }) { Text("Сегодня") }; OutlinedButton(onClick = { dateText = when(mode) { "Месяц" -> date.plusMonths(1); "День" -> date.plusDays(1); else -> date.plusWeeks(1) }.toString() }) { Text("Вперёд") } } }
         item { Text("$start — ${end.minusDays(1)}", fontWeight = FontWeight.Bold) }
         items((0 until java.time.temporal.ChronoUnit.DAYS.between(start, end).toInt()).map { start.plusDays(it.toLong()) }) { day ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(day.format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale("ru"))), color = MaterialTheme.colorScheme.primary); val list = planned.filter { it.date == day.toString() }; if(list.isEmpty()) Text("Свободный день · восстановление", style = MaterialTheme.typography.bodySmall); list.forEach { w -> WorkoutCard(w) { open(w.id) } } }
@@ -416,7 +420,14 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var query by rememberSaveable { mutableStateOf("") }; var levelFilter by rememberSaveable { mutableStateOf("Любой") }; var daysFilter by rememberSaveable { mutableStateOf("Любое число") }; var durationFilter by rememberSaveable { mutableStateOf("Любая") }; var equipmentFilter by rememberSaveable { mutableStateOf("Любое оборудование") }
     var imported by remember { mutableStateOf<ImportedProgram?>(null) }; var importError by remember { mutableStateOf("") }; var importStart by rememberSaveable { mutableStateOf(LocalDate.now().with(java.time.DayOfWeek.MONDAY).toString()) }; var mappingChooser by remember { mutableStateOf<String?>(null) }; var mappingQuery by rememberSaveable { mutableStateOf("") }
     val mapping = remember { mutableStateMapOf<String, String>() }; val context = LocalContext.current; val scope = rememberCoroutineScope(); val allExercises by vm.exercises.collectAsStateWithLifecycle()
-    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch { runCatching { withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("Не удалось прочитать файл") } }.onSuccess { content -> runCatching { if(uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase() == "csv") ProgramInterchange.parseCsv(content) else ProgramInterchange.parseJson(content) }.onSuccess { imported = it; importError = ""; mapping.clear() }.onFailure { importError = it.message ?: "Некорректный файл программы" } }.onFailure { importError = it.message ?: "Не удалось открыть файл" } } }
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch {
+        try {
+            val content = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { readLimitedUtf8(it, 10_000_000) } ?: error("Не удалось прочитать файл") }
+            imported = withContext(Dispatchers.Default) { if(uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase() == "csv" || !content.trimStart().startsWith("{")) ProgramInterchange.parseCsv(content) else ProgramInterchange.parseJson(content) }
+            importError = ""; mapping.clear()
+        } catch(e: kotlinx.coroutines.CancellationException) { throw e }
+        catch(e: Exception) { importError = e.message ?: "Некорректный файл программы" }
+    } }
     val saved by vm.workouts.collectAsStateWithLifecycle()
     val programEquipmentOptions = remember(allExercises) { listOf("Любое оборудование") + allExercises.map { it.equipment }.filter { it.isNotBlank() }.distinct().sorted() }
     val filteredPrograms = remember(direction, query, levelFilter, daysFilter, durationFilter, equipmentFilter, allExercises) {
@@ -446,7 +457,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     }
     if(selected != null) {
         val p = selected!!; val start = runCatching { LocalDate.parse(startText) }.getOrNull(); val preview = start?.let { Catalog.schedule(p, it) }
-        AlertDialog(onDismissRequest = { selected = null }, title = { Text(p.name) }, text = { Column { Field("Начало, ГГГГ-ММ-ДД", startText, { startText = it }); Text("Будет создано ${preview?.size ?: 0} независимых занятий. Затем откройте любое занятие в календаре, замените упражнения и нагрузку, сохраните как свой шаблон."); preview?.take(3)?.forEach { Text("${it.date}: ${it.items.size} упражнений") }; if(error.isNotBlank()) Text(error) } }, confirmButton = { TextButton(onClick = { if(preview == null) error = "Проверьте дату" else vm.exclusive { vm.repo.saveAll(preview); selected = null; applied() } }) { Text("Добавить в мой план") } }, dismissButton = { TextButton(onClick = { selected = null }) { Text("Отмена") } })
+        AlertDialog(onDismissRequest = { selected = null }, title = { Text(p.name) }, text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) { Field("Начало, ГГГГ-ММ-ДД", startText, { startText = it }); Text("Будет создано ${preview?.size ?: 0} независимых занятий. Затем откройте любое занятие в календаре, замените упражнения и нагрузку, сохраните как свой шаблон."); preview?.take(3)?.forEach { Text("${it.date}: ${it.items.size} упражнений") }; if(error.isNotBlank()) Text(error) } }, confirmButton = { TextButton(onClick = { if(preview == null) error = "Проверьте дату" else vm.exclusive { vm.repo.saveAll(preview); selected = null; applied() } }) { Text("Добавить в мой план") } }, dismissButton = { TextButton(onClick = { selected = null }) { Text("Отмена") } })
     }
     if(imported != null) {
         val p = imported!!; val parsedStart = runCatching { LocalDate.parse(importStart) }.getOrNull(); val start = parsedStart?.takeIf { it.dayOfWeek == java.time.DayOfWeek.MONDAY }
@@ -544,7 +555,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         if(result[Manifest.permission.ACCESS_FINE_LOCATION] != true) vm.notify("Для записи маршрута требуется точная геолокация. Маршрут можно просматривать и без неё.")
     }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) scope.launch { runCatching {
-        val xml = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { it.readBytes().also { bytes -> require(bytes.size <= 10_000_000) }.toString(Charsets.UTF_8) } ?: error("Файл недоступен") }
+        val xml = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use { readLimitedUtf8(it, 10_000_000) } ?: error("Файл недоступен") }
         val imported = withContext(Dispatchers.Default) { GpxCodec.importRoute(xml) }
         vm.action { vm.repo.saveRoute(imported); vm.notify("GPX-маршрут добавлен в избранное") }
     }.onFailure { error = it.message ?: "Не удалось импортировать GPX" } } }
@@ -645,12 +656,16 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     val launch by vm.runLaunch.collectAsStateWithLifecycle()
     val signal by RunService.signal.collectAsStateWithLifecycle(); var finish by remember { mutableStateOf(false) }; var manual by rememberSaveable { mutableStateOf(false) }; var followGps by rememberSaveable { mutableStateOf(true) }; var controlsLocked by rememberSaveable { mutableStateOf(false) }; var activeAutoOpened by rememberSaveable { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.runPermissionResult() }
-    LaunchedEffect(launch.phase) { if(!dedicated && launch.phase == RunLaunchPhase.ACTIVE && !activeAutoOpened) { activeAutoOpened = true; activeScreen() } }
-    LaunchedEffect(current?.id, current?.status, dedicated) { if(dedicated && current?.status == "done") detail(current.id) }
+    LaunchedEffect(launch.phase) { if(launch.phase != RunLaunchPhase.ACTIVE) activeAutoOpened = false else if(!dedicated && !activeAutoOpened) { activeAutoOpened = true; activeScreen() } }
+    var trackedRunId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(current?.id) { if(current != null) trackedRunId = current.id }
+    LaunchedEffect(runs, dedicated, trackedRunId) {
+        if(dedicated) runs.firstOrNull { it.id == trackedRunId && it.status == "done" }?.let { trackedRunId = null; detail(it.id) }
+    }
     if(dedicated) {
         Page {
             item { Title("Пробежка", "Карта, темп и секундомер") }
-            item { MapPanel(current?.points.orEmpty(), plannedRoute = current?.navigation, currentLocation = current?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }, followUser = current?.status == "active" && followGps, mapHeight = 410.dp) }
+            item { if(profileMapEnabled(vm)) MapPanel(current?.points.orEmpty(), plannedRoute = current?.navigation, currentLocation = current?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }, followUser = current?.status == "active" && followGps, mapHeight = 410.dp) else RouteFallback(current?.points.orEmpty()) }
             item { if(current?.points.isNullOrEmpty()) { Text(stringResource(R.string.gps_searching), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary); Text(stringResource(R.string.gps_waiting_open_sky), style = MaterialTheme.typography.bodySmall) } else Text(signal, style = MaterialTheme.typography.bodySmall) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_distance), "%.2f км".format((current?.distance ?: 0.0) / 1000), Modifier.weight(1f)); Metric(stringResource(R.string.gps_duration), formatTime(current?.let { RunTimers.elapsed(it, stamp) } ?: 0), Modifier.weight(1f)) } }
             item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric(stringResource(R.string.gps_current_pace), current?.takeIf { it.points.size > 1 }?.let { formatPace(Gps.currentPaceAt(it.points, stamp)) } ?: "—", Modifier.weight(1f)); Metric(stringResource(R.string.gps_average_pace), current?.let { formatPace(Gps.pace(it.distance, RunTimers.elapsed(it, stamp))) } ?: "—", Modifier.weight(1f)) } }
@@ -679,7 +694,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             val pace = if(current?.status == "active") Gps.currentPaceAt(current.points, stamp) else null
             Text("Текущий темп: ${formatPace(pace)}"); Text("Текущая скорость: ${pace?.let { "%.1f км/ч".format(60 / it) } ?: "—"}")
         } }
-        if(current != null) item { if(current.status == "active") TextButton(onClick = { followGps = !followGps }) { Text(if(followGps) "Камера следует за GPS · изменить" else "Следовать за GPS") }; MapPanel(current.points, plannedRoute = current.navigation, currentLocation = current.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }, followUser = current.status == "active" && followGps) }
+        if(current != null) item { if(current.status == "active") TextButton(onClick = { followGps = !followGps }) { Text(if(followGps) "Камера следует за GPS · изменить" else "Следовать за GPS") }; if(profileMapEnabled(vm)) MapPanel(current.points, plannedRoute = current.navigation, currentLocation = current.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }, followUser = current.status == "active" && followGps) else RouteFallback(current.points) }
         if(current?.navigation != null) item {
             val navRoute = current!!.navigation!!; val fix = current!!.points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }; val progress = fix?.let { RouteMath.progress(navRoute, it) }
             Panel { Text("Сопровождение · ${RouteMode.valueOf(navRoute.mode).label}", style = MaterialTheme.typography.titleLarge); Text(progress?.let { "Осталось %.2f км".format(it.remainingMeters / 1000) } ?: "Ожидается GPS-позиция маршрута"); if(progress?.offRoute == true) Text("Вы отклонились от маршрута примерно на ${progress.distanceFromRouteMeters.toInt()} м. Нажмите «Перестроить маршрут».", color = MaterialTheme.colorScheme.error) }
@@ -766,7 +781,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         item { Panel { Text("Выполнение недельного плана: ${week.count { it.status == "done" }} / ${week.size}"); LinearProgressIndicator(progress = { if(week.isEmpty()) 0f else week.count { it.status == "done" }.toFloat() / week.size }, modifier = Modifier.fillMaxWidth()) } }
     }
 }
-@Composable fun SettingsScreen(vm: FitViewModel) {
+@Composable fun SettingsScreen(vm: FitViewModel, importWorkouts: () -> Unit = {}) {
     val p by vm.profile.collectAsStateWithLifecycle(); val context = LocalContext.current
     var name by rememberSaveable(p.name) { mutableStateOf(p.name) }; var level by rememberSaveable(p.level) { mutableStateOf(p.level) }; var goals by rememberSaveable(p.goals) { mutableStateOf(p.goals) }; var activities by rememberSaveable(p.activities) { mutableStateOf(p.activities) }; var rest by rememberSaveable(p.rest) { mutableStateOf(p.rest.toString()) }; var routingUrl by rememberSaveable(p.routingBackendUrl) { mutableStateOf(p.routingBackendUrl) }
     var delete by remember { mutableStateOf(false) }; var importData by remember { mutableStateOf<Backup?>(null) }; var importCount by remember { mutableStateOf(0) }
@@ -784,7 +799,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     Page {
         item { Title("Профиль и настройки", "Без регистрации · данные на вашем устройстве") }
         item { Field("Имя", name, { name = it }) }
-        item { Field("Valhalla routing backend URL", routingUrl, { routingUrl = it }) }
+        item { Field("Адрес сервера маршрутов Valhalla", routingUrl, { routingUrl = it }) }
         item { Text("По умолчанию используется общедоступный backend сообщества, работающий без SLA. Можно указать собственный Valhalla HTTPS endpoint. Для локальной сети допускается HTTP.", style = MaterialTheme.typography.bodySmall) }
         item { Choice(listOf("Новичок", "Любитель", "Продвинутый"), level) { level = it } }
         item { Field("Спортивные цели", goals, { goals = it }, lines = 2) }; item { Field("Предпочтительные активности", activities, { activities = it }) }; item { Field("Отдых по умолчанию, сек", rest, { rest = it }, true) }
@@ -798,12 +813,13 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         } }
         item { AdditionalSettings(vm) }
         item { Text("Ваши данные", style = MaterialTheme.typography.titleLarge) }
+        item { Action("Импорт из Рубеж12 / другого JSON", Icons.Default.FileUpload, click = importWorkouts) }
         item { Action("Экспорт резервной копии JSON", Icons.Default.FileDownload) { jsonExport.launch("fitprogress-${LocalDate.now()}.json") } }
         item { Action("Экспорт истории CSV", Icons.Default.TableChart) { csvExport.launch("fitprogress-history-${LocalDate.now()}.csv") } }
         item { OutlinedButton(onClick = { importer.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) }, modifier = Modifier.fillMaxWidth()) { Text("Импорт резервной копии JSON") } }
         item { Text("Импорт добавляет отсутствующие записи. Совпадающие идентификаторы пропускаются; существующая история не перезаписывается. Изображения из галереи на другом телефоне могут быть недоступны — вместо них показывается локальная иллюстрация.", style = MaterialTheme.typography.bodySmall) }
         item { TextButton(onClick = { delete = true }) { Text("Удалить все пользовательские данные", color = MaterialTheme.colorScheme.error) } }
-        item { Text("FitProgress AI 1.0 · локальные проверяемые рекомендации. Данные не отправляются на сервер. Для отображения карты загружаются тайлы OpenStreetMap.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("FitProgress AI 3.1 RC1 · история хранится на устройстве. Карты загружаются из OpenStreetMap; поиск мест и построение маршрута передают выбранные адреса и координаты картографическим сервисам.", style = MaterialTheme.typography.bodySmall) }
     }
     if(importData != null) Confirm("Импорт проверен", "В копии $importCount записей. Добавить их? Сначала завершите активные тренировки и пробежки.", { importData = null }) { val b = importData!!; vm.exclusive { vm.repo.restore(b); importData = null; vm.notify("Импорт завершён; совпадающие записи пропущены") } }
     if(delete) Confirm("Удалить все данные?", "Упражнения, планы, результаты, маршруты и профиль будут удалены без возможности отмены. Встроенный каталог останется. Сначала экспортируйте резервную копию.", { delete = false }) {

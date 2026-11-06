@@ -1,0 +1,38 @@
+{
+  "unit": {
+    "tests": 158,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "unit_classes": {
+    "ru.fitprogress.ai.StabilityTest": 8,
+    "ru.fitprogress.ai.PersonalTest": 42,
+    "ru.fitprogress.ai.ProgramInterchangeTest": 5,
+    "ru.fitprogress.ai.MigrationSqlTest": 2,
+    "ru.fitprogress.ai.NavigationTest": 12,
+    "ru.fitprogress.ai.ExerciseSearchTest": 5,
+    "ru.fitprogress.ai.RunLaunchTest": 12,
+    "ru.fitprogress.ai.ImportTest": 12,
+    "ru.fitprogress.ai.DomainTest": 60
+  },
+  "lint": {
+    "Error": 0,
+    "Warning": 59
+  },
+  "lint_issues_by_id": {
+    "UnusedAttribute": 1,
+    "GradleDependency": 14,
+    "ModifierParameter": 2,
+    "LogNotTimber": 24,
+    "DataExtractionRules": 1,
+    "KaptUsageInsteadOfKsp": 1,
+    "AutoboxingStateCreation": 1,
+    "UnusedResources": 13,
+    "UseKtx": 3
+  },
+  "clean_gradle_build": true,
+  "qa_device_methods_passed": 36,
+  "qa_device_methods_skipped": 2,
+  "qa_update_persistence_passed": true
+}

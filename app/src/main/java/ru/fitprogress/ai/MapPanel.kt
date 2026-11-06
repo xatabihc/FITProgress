@@ -28,6 +28,18 @@ import org.maplibre.android.style.layers.PropertyFactory.*
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.*
 
+private object MapHttp {
+    @Volatile private var client: OkHttpClient? = null
+    fun get(context: android.content.Context): OkHttpClient = client ?: synchronized(this) {
+        client ?: OkHttpClient.Builder()
+            .cache(okhttp3.Cache(java.io.File(context.applicationContext.cacheDir, "map-http"), 48L * 1024 * 1024))
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("User-Agent", "FitProgressAI/3.1 (+https://github.com/xatabihc/train)").build()) }
+            .build().also { client = it }
+    }
+}
+
 @Composable fun MapPanel(
     points: List<GeoPoint>, plannedRoute: NavigationRoute? = null, selectionEnabled: Boolean = false,
     markers: List<RouteCoordinate> = emptyList(), currentLocation: RouteCoordinate? = points.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) },
@@ -39,7 +51,7 @@ import org.maplibre.geojson.*
     val selection = rememberUpdatedState(selectionEnabled); val tap = rememberUpdatedState(onMapTap)
     val mapView = remember {
         MapLibre.getInstance(context)
-        HttpRequestUtil.setOkHttpClient(OkHttpClient.Builder().addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("User-Agent", "FitProgressAI/3.0 (+https://github.com/xatabihc/train)").build()) }.build())
+        HttpRequestUtil.setOkHttpClient(MapHttp.get(context))
         MapView(context).apply { onCreate(null) }
     }
     DisposableEffect(mapView, owner) {
@@ -73,6 +85,16 @@ import org.maplibre.geojson.*
             }
         }
         onDispose { owner.lifecycle.removeObserver(observer); stop(); mapView.onDestroy() }
+    }
+    LaunchedEffect(points.isNotEmpty(), map, styleLoaded) {
+        val m = map ?: return@LaunchedEffect
+        if(styleLoaded && points.isNotEmpty() && !followUser && plannedRoute == null) {
+            val display = sampleGpsTrack(points)
+            runCatching {
+                if(display.size == 1) m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(display[0].lat, display[0].lon), 16.0))
+                else m.moveCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.Builder().includes(display.map { LatLng(it.lat, it.lon) }).build(), 48))
+            }
+        }
     }
     LaunchedEffect(points.size, points.lastOrNull()?.lat, points.lastOrNull()?.lon, points.lastOrNull()?.segment, map, styleLoaded) {
         val m = map ?: return@LaunchedEffect
@@ -120,11 +142,11 @@ import org.maplibre.geojson.*
 
 private fun sampleGpsTrack(points: List<GeoPoint>, maximum: Int = 2400): List<GeoPoint> {
     if(points.size <= maximum) return points
-    val step = (points.size / maximum).coerceAtLeast(1)
+    val step = ((points.size + maximum - 1) / maximum).coerceAtLeast(1)
     return points.filterIndexed { index, point -> index % step == 0 || index == points.lastIndex || points.getOrNull(index - 1)?.segment != point.segment || points.getOrNull(index + 1)?.segment != point.segment }
 }
 private fun sampleRoute(points: List<RouteCoordinate>, maximum: Int = 2400): List<RouteCoordinate> {
     if(points.size <= maximum) return points
-    val step = (points.size / maximum).coerceAtLeast(1)
+    val step = ((points.size + maximum - 1) / maximum).coerceAtLeast(1)
     return points.filterIndexed { index, point -> index % step == 0 || index == points.lastIndex || points.getOrNull(index - 1)?.segment != point.segment || points.getOrNull(index + 1)?.segment != point.segment }
 }

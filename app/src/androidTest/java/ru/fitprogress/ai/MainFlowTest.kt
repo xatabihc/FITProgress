@@ -10,6 +10,7 @@ import org.junit.Test
 class MainFlowTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     @Before fun reset() {
+        awaitCompose(ui)
         lateinit var app: FitApp
         ui.activityRule.scenario.onActivity { activity ->
             app = activity.application as FitApp
@@ -25,16 +26,17 @@ class MainFlowTest {
             app.repository.currentRun()?.let { r -> app.repository.updateRun(r.id) { RunTimers.finish(it, stamp) } }
             app.repository.erase()
         }
+        RunService.launch.idle()
         ui.waitForIdle()
     }
     private fun scroll(text: String) { ui.onNodeWithTag("page").performScrollToNode(hasText(text, substring = false)) }
     @Test fun createAndRenameExercise() {
         ui.onNodeWithContentDescription(ui.activity.getString(R.string.nav_catalog), useUnmergedTree = true).performClick()
-        ui.onNodeWithText("Создать упражнение").performClick()
-        ui.onNodeWithText("Название").performTextInput("Мой присед")
+        scroll("Создать упражнение"); ui.onNodeWithText("Создать упражнение").performClick()
+        scroll("Название"); ui.onNodeWithText("Название").performTextInput("Мой присед")
         scroll("Сохранить упражнение"); ui.onNodeWithText("Сохранить упражнение").performClick(); ui.waitForIdle()
         scroll("Мой присед"); ui.onNodeWithText("Мой присед").performClick()
-        ui.onNodeWithText("Название").performTextReplacement("Присед с паузой")
+        scroll("Название"); ui.onNodeWithText("Название").performTextReplacement("Присед с паузой")
         scroll("Сохранить упражнение"); ui.onNodeWithText("Сохранить упражнение").performClick(); ui.waitForIdle()
         scroll("Присед с паузой"); ui.onNodeWithText("Присед с паузой").assertIsDisplayed()
     }
@@ -44,7 +46,7 @@ class MainFlowTest {
         ui.onAllNodesWithText("Отжимания")[0].performClick()
         scroll("Начать тренировку"); ui.onNodeWithText("Начать тренировку").performClick(); ui.waitForIdle()
         scroll("Текущий подход: 1")
-        ui.onAllNodesWithContentDescription("Отметить подход выполненным")[0].performClick()
+        ui.onAllNodesWithContentDescription("Отметить подход выполненным")[0].performScrollTo().performClick()
         ui.onNodeWithText("Выполнено", useUnmergedTree = true).performClick(); ui.waitForIdle()
         scroll("Завершить и сохранить"); ui.onNodeWithText("Завершить и сохранить").performClick()
         ui.onNodeWithText("Сохранить результат").performClick(); ui.waitForIdle()
@@ -55,7 +57,7 @@ class MainFlowTest {
     @Test fun emptyGpsScreenDoesNotGenerateDistance() {
         ui.onNodeWithContentDescription("Бег", useUnmergedTree = true).performClick()
         ui.onNode(hasText("0.00 км") or hasText("0,00 км")).assertIsDisplayed()
-        ui.onNodeWithText("Начать пробежку").assertExists()
+        scroll("Начать пробежку"); ui.onNodeWithText("Начать пробежку").assertIsDisplayed()
     }
     @Test fun runRouteBuilderCanOpenAndReturnWithoutGpsPermission() {
         ui.onNodeWithContentDescription("Бег", useUnmergedTree = true).performClick()
@@ -71,7 +73,7 @@ class MainFlowTest {
         scroll("Программы"); ui.onNodeWithText("Программы").performClick()
         scroll("Создать свою программу"); ui.onNodeWithText("Создать свою программу").performClick(); ui.waitForIdle()
         scroll("Добавить занятие / восстановление"); ui.onNodeWithText("Добавить занятие / восстановление").performClick()
-        ui.onNodeWithText("Добавить упражнение").performClick(); ui.onAllNodesWithText("Отжимания")[0].performClick()
+        ui.onNodeWithText("Добавить упражнение").performScrollTo().performClick(); ui.onAllNodesWithText("Отжимания")[0].performClick()
         ui.onNodeWithText("Сохранить день").performClick(); ui.waitForIdle()
         scroll("Просмотреть и применить будущий план"); ui.onNodeWithText("Просмотреть и применить будущий план").performClick()
         ui.onNodeWithText("Подтвердить изменения").performClick(); ui.waitForIdle()
@@ -91,6 +93,37 @@ class MainFlowTest {
         scroll("Дневник самочувствия"); ui.onNodeWithText("Дневник самочувствия").performClick()
         ui.onNodeWithText("Заполнить дневник").performClick(); ui.onNodeWithText("Сохранить дневник").performClick(); ui.waitForIdle()
         scroll("Изменить запись"); ui.onNodeWithText("Изменить запись").assertIsDisplayed()
+    }
+
+    @Test fun homeTabAlwaysReturnsHomeFromNestedScreensRepeatedly() {
+        repeat(3) {
+            scroll("Программы"); ui.onNodeWithText("Программы").performClick()
+            ui.onNodeWithContentDescription(ui.activity.getString(R.string.nav_catalog), useUnmergedTree = true).performClick()
+            ui.onNodeWithContentDescription(ui.activity.getString(R.string.nav_home), useUnmergedTree = true).performClick()
+            scroll("Создать тренировку"); ui.onNodeWithText("Создать тренировку").assertIsDisplayed()
+            ui.onNodeWithContentDescription("Настройки").performClick()
+            ui.onNodeWithContentDescription("На главную").performClick()
+            scroll("Создать тренировку"); ui.onNodeWithText("Создать тренировку").assertIsDisplayed()
+        }
+    }
+
+    @Test fun savedRunOpensResultWhenCurrentRunDisappears() {
+        val app = ui.activity.application as FitApp
+        ui.onNodeWithContentDescription("Бег", useUnmergedTree = true).performClick()
+        repeat(2) {
+            val draft = Run(status = "paused", activeSince = 0)
+            runBlocking { app.repository.saveRun(draft) }
+            ui.runOnIdle { RunService.launch.active() }
+            ui.waitUntil(10000) { ui.onAllNodesWithText("Карта, темп и секундомер").fetchSemanticsNodes().isNotEmpty() }
+            scroll("Завершить пробежку"); ui.onNodeWithText("Завершить пробежку").assertIsEnabled()
+            runBlocking { app.repository.updateRun(draft.id) { RunTimers.finish(it, AndroidClock.read(app)) } }
+            ui.runOnIdle { RunService.launch.idle() }
+            ui.waitUntil(10000) { ui.onAllNodesWithText("Сохранённая пробежка").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithText("Сохранённая пробежка").assertIsDisplayed()
+            // Return through the previous active page to the original running tab.
+            repeat(2) { ui.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; ui.waitForIdle() }
+            ui.onNodeWithText("Бег в твоём ритме").assertIsDisplayed()
+        }
     }
 
 }

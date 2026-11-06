@@ -49,7 +49,16 @@ private fun goalUnit(kind: String) = when(kind) { "distance" -> "км"; "pace" -
         if(kind != "program") Field("Цель, ${goalUnit(kind)}", target, { target = it }, true) else Text("Цель — 100% завершённых занятий программы")
         Field("С, ГГГГ-ММ-ДД", from, { from = it }); Field("По, ГГГГ-ММ-ДД", until, { until = it })
         if(kind in listOf("distance", "pace", "sessions", "consistency")) Choice(listOf("Все записи", "Только GPS", "Только вручную"), when(source) { "gps" -> "Только GPS"; "manual" -> "Только вручную"; else -> "Все записи" }) { source = when(it) { "Только GPS" -> "gps"; "Только вручную" -> "manual"; else -> "all" } }
-        if(kind == "strength") { Text("Выберите упражнение"); exercises.forEach { e -> FilterChip(selected = exercise == e.id, onClick = { exercise = e.id }, label = { Text(e.name) }) }; Field("Минимум повторений в подходе", reps, { reps = it }, true) }
+        if(kind == "strength") {
+            var query by rememberSaveable { mutableStateOf("") }
+            Text("Выберите упражнение"); Field("Поиск упражнения", query, { query = it })
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.height(220.dp)) {
+                items(exercises.filter { it.name.contains(query, true) }, key = { it.id }) { e ->
+                    FilterChip(selected = exercise == e.id, onClick = { exercise = e.id }, label = { Text(e.name) })
+                }
+            }
+            Field("Минимум повторений в подходе", reps, { reps = it }, true)
+        }
         if(kind == "program") { if(programs.isEmpty()) Text("Сначала создайте или начните программу"); programs.forEach { (id, name) -> FilterChip(selected = program == id, onClick = { program = id }, label = { Text(name) }) } }
         if(kind == "consistency") Field("Минимум занятий за календарную неделю", frequency, { frequency = it }, true)
         Field("Заметки", notes, { notes = it }, lines = 2); if(error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)

@@ -1,0 +1,32 @@
+{
+  "package": "ru.fitprogress.ai",
+  "versionName": "3.1-rc1",
+  "versionCode": 7,
+  "apk": "artifacts/FitProgress-3.1-rc1-debug.apk",
+  "bytes": 110014404,
+  "sha256": "0a903d780b1b1962efe7a111ba96ba52d1ee1f838b8969baaf4ccb4ba217a595",
+  "signer_sha256": [
+    "2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef"
+  ],
+  "signature_verified": true,
+  "zip_crc_verified": true,
+  "zipalign_16kb": true,
+  "native_abis": [
+    "arm64-v8a",
+    "armeabi-v7a",
+    "x86",
+    "x86_64"
+  ],
+  "room_schema_version": 2,
+  "room_identity_present": true,
+  "required_classes_present": [
+    "RunService",
+    "WorkoutTimerService",
+    "FitDatabase_Impl",
+    "WorkoutImport",
+    "SessionTimers",
+    "PlanBuilder"
+  ],
+  "signing_type": "debug",
+  "real_world_gps_verified": false
+}

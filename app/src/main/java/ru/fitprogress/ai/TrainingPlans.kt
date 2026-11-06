@@ -19,6 +19,9 @@ object PlanBuilder {
             require(!day.recovery || day.items.isEmpty()) { "В дне отдыха не должно быть подходов" }
         }
     }
+    fun duplicate(p: TrainingPlan): TrainingPlan = p.copy(id = newId(), name = p.name.take(180) + " · копия", days = p.days.map { day ->
+        day.copy(id = newId(), items = day.items.map { item -> item.copy(id = newId(), sets = item.sets.map { it.copy(id = newId(), done = false) }) })
+    }).also(::validate)
     fun definition(p: TrainingPlan) = Workout(id = p.id, name = p.name, date = p.startDate, template = true, program = "custom-definition", plan = p)
     fun schedule(p: TrainingPlan): List<Workout> {
         validate(p); val start = LocalDate.parse(p.startDate)

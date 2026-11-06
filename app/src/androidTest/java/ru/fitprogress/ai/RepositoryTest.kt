@@ -147,4 +147,18 @@ class RepositoryTest {
         assertEquals(workout, repo.workouts.first().single())
     }
 
+    @Test fun externalImportIsAtomicDeduplicatedAndRetainsUnfinishedSets() = runBlocking {
+        val source = """[{"id":"one","name":"Импорт","date":"2026-11-04","status":"active","exercises":[{"name":"Моё движение","sets":[{"reps":8,"weight":20,"done":true}]}]}]"""
+        val imported = WorkoutImport.parse(source, Catalog.exercises).backup
+        assertEquals(1 to 0, repo.importWorkouts(imported))
+        val saved = repo.workouts.first().single()
+        assertEquals("planned", saved.status); assertEquals(160.0, saved.volume(), 0.0)
+        assertEquals(0 to 1, repo.importWorkouts(imported))
+        assertEquals(saved, repo.workouts.first().single())
+        assertEquals(1, repo.exercises.first().count { it.id == imported.exercises.single().id })
+        val invalid = imported.copy(workouts = imported.workouts + Workout(name = ""))
+        assertTrue(runCatching { repo.importWorkouts(invalid) }.isFailure)
+        assertEquals(saved, repo.workouts.first().single())
+    }
+
 }

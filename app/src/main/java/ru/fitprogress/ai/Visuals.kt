@@ -26,7 +26,8 @@ import kotlin.math.*
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(Uri.parse(e.imageUri)).use { BitmapFactory.decodeStream(it, null, options) }
             require(options.outWidth in 1..40000 && options.outHeight in 1..40000)
-            val sample = max(1, max(options.outWidth, options.outHeight) / 600)
+            var sample = 1
+            while(max(options.outWidth, options.outHeight) / sample > 1200) sample *= 2
             context.contentResolver.openInputStream(Uri.parse(e.imageUri)).use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap() }
         }.getOrNull() }
     }

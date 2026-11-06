@@ -93,8 +93,10 @@ class RunService : Service() {
                     if(next != r) repo.saveRun(next)
                     if(announce && repo.profile.first().runSignals) {
                         val p = repo.profile.first()
-                        if(p.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
-                        if(p.timerSound) { val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75); tone.startTone(ToneGenerator.TONE_PROP_BEEP, 500); scope.launch { try { delay(700) } finally { tone.release() } } }
+                        runCatching {
+                            if(p.timerVibration) (getSystemService(VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                            if(p.timerSound) { val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75); tone.startTone(ToneGenerator.TONE_PROP_BEEP, 500); scope.launch { try { delay(700) } finally { tone.release() } } }
+                        }.onFailure { Log.w("FitRunStart", "Kilometer signal unavailable; recording continues", it) }
                         signal.value = "Отсечка: $km км GPS"
                     }
                 }
@@ -240,10 +242,11 @@ class RunService : Service() {
     private fun notification(r: Run?): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val finish = PendingIntent.getService(this, 2, Intent(this, RunService::class.java).setAction(FINISH), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val pause = PendingIntent.getService(this, 1, Intent(this, RunService::class.java).setAction(PAUSE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val toggle = Intent(this, RunService::class.java).setAction(if(r?.status == "paused") RESUME else PAUSE)
+        val pause = if(r?.status == "paused") PendingIntent.getForegroundService(this, 1, toggle, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else PendingIntent.getService(this, 1, toggle, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, "run").setSmallIcon(ru.fitprogress.ai.R.drawable.ic_logo).setContentTitle(if(r?.status == "paused") "Бег на паузе" else "FitProgress · запись GPS")
             .setContentText(if(r == null) "Подключение GPS…" else "%.2f км · %s".format(r.distance / 1000, formatTime(RunTimers.elapsed(r, AndroidClock.read(this))))).setContentIntent(open).setOngoing(true)
-            .addAction(0, "Пауза", pause).addAction(0, "Сохранить", finish).build()
+            .addAction(0, if(r?.status == "paused") "Продолжить" else "Пауза", pause).addAction(0, "Сохранить", finish).build()
     }
     override fun onDestroy() {
         removeUpdates()

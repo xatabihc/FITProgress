@@ -108,6 +108,24 @@ class Repository(private val db: FitDatabase, private val context: Context) {
             b.runs.filter { it.id !in existingR }.forEach { val r = if(it.status != "done") it.copy(status = "paused", activeSince = 0, timing = null, segment = it.segment + 1) else it; dao.putRun(RunRow(r.id, gson.toJson(r))) }
         }
     }
+    suspend fun importWorkouts(b: Backup): Pair<Int, Int> = storage {
+        b.workouts.forEach(BackupCodec::validateWorkout); b.exercises.forEach(BackupCodec::validateExercise)
+        db.withTransaction {
+            val existing = dao.allWorkouts().mapTo(HashSet()) { it.id }
+            val fresh = b.workouts.filterNot { it.id in existing }
+            // Imported unfinished history can coexist as drafts; activate only one session later.
+            val used = fresh.flatMap { it.items }.mapTo(HashSet()) { it.exerciseId }
+            val known = dao.allExercises().mapTo(HashSet()) { it.id }
+            b.exercises.filter { it.id in used && it.id !in known }.forEach { dao.putExercise(ExerciseRow(it.id, gson.toJson(it))) }
+            fresh.forEach { w ->
+                val imported = SessionTimers.forImport(w)
+                // Several unfinished source sessions become planned drafts with actual sets preserved.
+                val draft = if(imported.status == "paused") imported.copy(status = "planned", notes = imported.notes + "\nНезавершённая импортированная тренировка: черновик, выполненные подходы сохранены.") else imported
+                dao.putWorkout(WorkoutRow(draft.id, gson.toJson(draft)))
+            }
+            fresh.size to (b.workouts.size - fresh.size)
+        }
+    }
     suspend fun erase() = storage { db.withTransaction { require(dao.allRuns().none { gson.fromJson(it.payload, Run::class.java).status != "done" } && dao.allWorkouts().none { gson.fromJson(it.payload, Workout::class.java).status in listOf("active", "paused") }) { "Сначала завершите активные занятия" }; dao.clearExercises(); dao.clearWorkouts(); dao.clearRuns(); dao.clearPersonal() }; context.settingsStore.edit { it.clear() } }
     suspend fun recoverWorkouts(now: ClockStamp) = storage {
         dao.allWorkouts().forEach { row -> val w = gson.fromJson(row.payload, Workout::class.java); val recovered = SessionTimers.recover(w, now); if(recovered != w) dao.putWorkout(WorkoutRow(w.id, gson.toJson(recovered))) }

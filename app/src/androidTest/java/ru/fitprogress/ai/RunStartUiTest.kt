@@ -9,6 +9,7 @@ import org.junit.*
 class RunStartUiTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     @Before fun prepare() {
+        awaitCompose(ui)
         val app = ui.activity.application as FitApp
         check(app.isolatedTestStorage) { "Use FitTestRunner" }
         runBlocking {

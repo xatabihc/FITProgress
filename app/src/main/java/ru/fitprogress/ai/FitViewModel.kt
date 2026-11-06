@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.*
 import java.time.LocalDate
 
 class FitViewModel @JvmOverloads constructor(app: Application, val repo: Repository = (app as FitApp).repository) : AndroidViewModel(app) {
+    val workoutImport = MutableStateFlow(WorkoutImportState())
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 20)
     val busy = MutableStateFlow(false)
     val loadFailure = MutableStateFlow<String?>(null)
@@ -81,6 +82,7 @@ class FitViewModel @JvmOverloads constructor(app: Application, val repo: Reposit
     fun completeSet(w: Workout, itemId: String, setId: String, entry: SetEntry) = update(w.id) { SessionEdits.complete(it, itemId, entry.copy(id = setId), stamp()) }
     fun finish(w: Workout, effort: Int, recovery: Int, pain: Boolean) = update(w.id) { SessionTimers.finish(it, stamp()).copy(effort = effort, recovery = recovery, pain = pain) }
     fun createPlan(open: (String) -> Unit) = exclusive { val p = TrainingPlan(); repo.save(PlanBuilder.definition(p)); open(p.id) }
+    fun copyPlan(plan: TrainingPlan, open: (String) -> Unit) = exclusive { val copy = PlanBuilder.duplicate(plan); repo.save(PlanBuilder.definition(copy)); open(copy.id) }
     fun updatePlan(id: String, transform: (TrainingPlan) -> TrainingPlan) = update(id) { w -> val p = transform(requireNotNull(w.plan)); PlanBuilder.validate(p); PlanBuilder.definition(p) }
     fun duplicate(w: Workout, template: Boolean = false, onCreated: (String) -> Unit = {}) = exclusive { val copy = Training.duplicate(w, date = LocalDate.now(), template = template).copy(name = w.name + if(template) " · шаблон" else " · копия"); repo.save(copy); onCreated(copy.id) }
     fun demo() = exclusive {

@@ -59,3 +59,5 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         Result.success()
     } catch(e: CancellationException) { throw e } catch(_: Exception) { Result.retry() }
 }
+
+@Composable fun profileMapEnabled(vm: FitViewModel): Boolean { val profile by vm.profile.collectAsStateWithLifecycle(); return profile.mapEnabled }

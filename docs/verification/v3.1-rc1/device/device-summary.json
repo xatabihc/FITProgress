@@ -1,0 +1,23 @@
+{
+  "package": "ru.fitprogress.ai.qa",
+  "sha256": "cda1792590a0a0f79e0fbc623c38b0f740c5e2855ba33b824aba929c7fd59e1d",
+  "suite_passed": true,
+  "update_marker_preserved": true,
+  "production_package_modified": false,
+  "qa_permissions_granted": [
+    "notifications (API33+)",
+    "coarse location",
+    "fine location"
+  ],
+  "real_gps_route_tested": false,
+  "junit_summary": [
+    "OK (38 tests)"
+  ],
+  "test_method_status_counts": {
+    "0": 36,
+    "-1": 0,
+    "-2": 0,
+    "-3": 0,
+    "-4": 2
+  }
+}

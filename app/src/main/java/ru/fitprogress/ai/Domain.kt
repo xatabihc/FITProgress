@@ -73,7 +73,7 @@ object Gps {
         if (!valid(p) || abs(now - p.time) > 20_000) return false
         if (last == null || last.segment != p.segment) return true
         val dt = durationBetween(last, p) / 1000.0
-        if (dt <= 0 || dt > 120) return false
+        if (dt <= 0 || dt > 20) return false
         val meters = distance(last, p)
         return meters >= max(3.0, (last.accuracy + p.accuracy) * 0.5) && meters / dt <= 12.0
     }
@@ -81,7 +81,7 @@ object Gps {
     fun speed(distance: Double, ms: Long): Double = if (ms > 0) distance * 3600 / ms else 0.0 // km/h
     fun currentPace(points: List<GeoPoint>, now: Long): Double? {
         val last = points.lastOrNull() ?: return null
-        if(now - last.time > 20000) return null
+        if(now - last.time !in 0L..20000L) return null
         val recent = points.takeLastWhile { it.segment == last.segment && durationBetween(it, last) in 0L..30000L }
         if(recent.size < 2) return null
         return pace(recent.zipWithNext().sumOf { distance(it.first, it.second) }, durationBetween(recent.first(), last))
@@ -128,7 +128,7 @@ object Gps {
     fun append(r: Run, p: GeoPoint, now: Long): Run {
         if (r.status != "active") return r
         val last = r.points.lastOrNull()
-        if(last != null && durationBetween(last, p) > 120000 && valid(p) && abs(now - p.time) <= 20000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
+        if(last != null && durationBetween(last, p) > 20000 && valid(p) && abs(now - p.time) <= 20000) return r.copy(segment = r.segment + 1, points = r.points + p.copy(segment = r.segment + 1))
         if(!accept(last, p, now)) return r
         val delta = if (last != null && last.segment == p.segment) distance(last, p) else 0.0
         val moving = if(last != null && last.segment == p.segment && durationBetween(last, p) in 1..20000 && delta / (durationBetween(last, p) / 1000.0) >= 0.5) durationBetween(last, p) else 0
@@ -168,7 +168,7 @@ object Catalog {
         Triple("Лёгкий бег", "Кардио", "Выберите разговорный темп. Короткий естественный шаг, расслабленные плечи. При дискомфорте переходите на ходьбу."),
         Triple("Ходьба", "Кардио", "Двигайтесь в комфортном темпе, держите корпус прямо. Используйте как восстановление между беговыми интервалами."),
         Triple("Растяжка задней поверхности бедра", "Растяжка", "Наклоняйтесь от тазобедренного сустава с нейтральной спиной. Удерживайте мягкое натяжение без боли."),
-        Triple("Берпи без прыжка", "Функциональные", "Присядьте, шагните в упор, вернитесь и встаньте. Сохраняйте контроль корпуса."),
+        Triple("Берпи без прыжка", "Функциональные упражнения", "Присядьте, шагните в упор, вернитесь и встаньте. Сохраняйте контроль корпуса."),
         Triple("Велосипед", "Другие", "Настройте высоту седла. Поддерживайте ровное вращение педалей и лёгкое дыхание.")
     ).mapIndexed { i, t -> Exercise(id = "builtin-$i", name = t.first, category = t.second, technique = t.third, muscles = when(t.second) { "Грудь" -> "Грудные, трицепс"; "Спина", "Калистеника" -> "Широчайшие, бицепс"; "Ноги" -> "Квадрицепсы, ягодичные"; else -> t.second }, equipment = if (t.first.contains("гантел") || t.first == "Сгибания рук") "Гантели" else if(t.first == "Подтягивания") "Турник" else if(t.first == "Велосипед") "Велосипед" else "Без оборудования", seconds = if(t.second in listOf("Кардио", "Растяжка", "Пресс", "Другие")) 30 else 0, builtIn = true) }
     private val easyAdvice = "Общая тренировочная программа, не медицинская рекомендация. Оставляйте не менее суток восстановления между силовыми занятиями. Прекратите упражнение при боли. Подберите вариант движения, который можете выполнять с устойчивой техникой."

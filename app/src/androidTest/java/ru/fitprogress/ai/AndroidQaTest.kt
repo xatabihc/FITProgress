@@ -16,6 +16,7 @@ import org.junit.Test
 class AndroidQaTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     @Before fun requireIsolation() {
+        awaitCompose(ui)
         check((ui.activity.application as FitApp).isolatedTestStorage)
     }
     @Test fun boundedNavigationAndRecreation() {

@@ -18,3 +18,5 @@ __pycache__/
 
 # Private local QA evidence
 qa-reports/
+
+.kotlin/

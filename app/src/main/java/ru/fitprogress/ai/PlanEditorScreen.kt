@@ -3,6 +3,7 @@ package ru.fitprogress.ai
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -14,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.LocalDate
 
-@Composable fun PlanEditorScreen(vm: FitViewModel, id: String) {
+@Composable fun PlanEditorScreen(vm: FitViewModel, id: String, openCopy: (String) -> Unit = {}) {
     val rows by vm.workouts.collectAsStateWithLifecycle(); val catalog by vm.exercises.collectAsStateWithLifecycle()
     val plan = rows.firstOrNull { it.id == id }?.plan
     if(plan == null) { Empty("Загрузка программы…"); return }
@@ -28,6 +29,7 @@ import java.time.LocalDate
         item { Title(plan.name, "${plan.weeks} недель · начало ${plan.startDate}") }
         item { Text(plan.notes) }
         item { Action("Название, длительность и начало", Icons.Default.Edit) { header = true } }
+        item { OutlinedButton(onClick = { vm.copyPlan(plan, openCopy) }) { Text("Создать редактируемую копию программы") } }
         item { Row { IconButton(enabled = week > 0, onClick = { selectedWeek = week - 1 }) { Icon(Icons.Default.ChevronLeft, "Предыдущая неделя") }; TextButton(onClick = { jump = true }, modifier = Modifier.weight(1f)) { Text("Неделя ${week + 1} из ${plan.weeks}") }; IconButton(enabled = week < plan.weeks - 1, onClick = { selectedWeek = week + 1 }) { Icon(Icons.Default.ChevronRight, "Следующая неделя") } } }
         item { Text("${LocalDate.parse(plan.startDate).plusDays(week * 7L)} — ${LocalDate.parse(plan.startDate).plusDays(week * 7L + 6)}") }
         items((0..6).toList(), key = { "day-$it" }) { weekday ->
@@ -116,8 +118,8 @@ import java.time.LocalDate
             text = {
                 Column {
                     Field("Поиск", search, { search = it })
-                    Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
-                        catalog.filter { it.name.contains(search, true) }.forEach { e ->
+                    LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                        items(catalog.filter { it.name.contains(search, true) }, key = { it.id }) { e ->
                             TextButton(onClick = { draft = draft.copy(items = draft.items + Training.item(e)); chooser = false }) { Text(e.name) }
                         }
                     }

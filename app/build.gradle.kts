@@ -11,9 +11,14 @@ android {
         applicationId = "ru.fitprogress.ai"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "3.0-dev"
+        versionCode = 7
+        versionName = "3.1-rc1"
+        manifestPlaceholders["appLabel"] = "FitProgress AI"
         testInstrumentationRunner = "ru.fitprogress.ai.FitTestRunner"
+    }
+    // Separate install for device QA when the installed production signer is unavailable.
+    if (providers.gradleProperty("fitQa").orNull == "true") {
+        buildTypes.getByName("debug") { applicationIdSuffix = ".qa"; manifestPlaceholders["appLabel"] = "FitProgress QA 3.1" }
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
