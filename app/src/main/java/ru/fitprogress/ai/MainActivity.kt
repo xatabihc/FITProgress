@@ -544,6 +544,8 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     var address by rememberSaveable { mutableStateOf("") }; var geocodeBusy by remember { mutableStateOf(false) }; var places by remember { mutableStateOf<List<GeocodedPlace>>(emptyList()) }
     var deviceLocation by remember { mutableStateOf(active?.points?.lastOrNull()?.let { RouteCoordinate(it.lat, it.lon) }) }
     var locating by remember { mutableStateOf(false) }
+    var fullscreenMap by rememberSaveable { mutableStateOf(false) }
+    var lastMapCenter by remember { mutableStateOf<RouteCoordinate?>(null) }
     val scope = rememberCoroutineScope()
     val geocoder = remember { NominatimGeocoder() }
     fun readLastLocation() {
@@ -592,6 +594,28 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     }
     fun coordinate(lat: String, lon: String): RouteCoordinate? = lat.toDoubleOrNull()?.let { a -> lon.toDoubleOrNull()?.let { b -> RouteCoordinate(a, b).takeIf { a in -90.0..90.0 && b in -180.0..180.0 } } }
     val modeValue = RouteMode.valueOf(mode)
+    val mapMarkers = buildList {
+        coordinate(startLat, startLon)?.let { add(it) }
+        coordinate(finishLat, finishLon)?.let { add(it) }
+        viaText.split(';').filter { it.isNotBlank() }.forEach { token ->
+            token.split(',').takeIf { it.size == 2 }?.let { pair ->
+                coordinate(pair[0].trim(), pair[1].trim())?.let { add(it) }
+            }
+        }
+    }
+    val selectOnMap: (RouteCoordinate) -> Unit = { point ->
+        val selectedRole = pick
+        val viaCountBefore = viaText.split(';').count { it.isNotBlank() }
+        setPoint(selectedRole, point)
+        if(selectedRole == "start") {
+            pick = if(loop) "via" else "finish"
+            error = if(loop) "Старт установлен. Можно добавить промежуточную точку." else "Старт установлен. Теперь выберите финиш."
+        } else if(selectedRole == "finish") {
+            error = "Финиш установлен. Нажмите «Построить маршрут»."
+        } else if(viaText.split(';').count { it.isNotBlank() } > viaCountBefore) {
+            error = "Промежуточная точка добавлена."
+        }
+    }
     Page {
         item { Title(if(active == null) "Построить маршрут" else "Изменить маршрут", "Выберите точки на карте или найдите место") }
         item { Choice(RouteMode.entries.map { it.label }, modeValue.label) { selected -> mode = RouteMode.entries.first { it.label == selected }.name } }
@@ -653,23 +677,22 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             }
         }
         item {
+            OutlinedButton(
+                onClick = { fullscreenMap = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            ) {
+                Icon(Icons.Default.Fullscreen, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Развернуть карту на весь экран")
+            }
+        }
+        item {
             MapPanel(
                 emptyList(), plannedRoute = route, selectionEnabled = true,
-                markers = listOfNotNull(coordinate(startLat, startLon), coordinate(finishLat, finishLon)),
+                markers = mapMarkers,
                 currentLocation = deviceLocation ?: coordinate(startLat, startLon), mapHeight = 360.dp,
-                onMapTap = { point ->
-                    val selectedRole = pick
-                    val viaCountBefore = viaText.split(';').count { it.isNotBlank() }
-                    setPoint(selectedRole, point)
-                    if(selectedRole == "start") {
-                        pick = "finish"
-                        error = "Старт установлен. Теперь выберите финиш."
-                    } else if(selectedRole == "finish") {
-                        error = "Финиш установлен. Нажмите «Построить маршрут»."
-                    } else if(viaText.split(';').count { it.isNotBlank() } > viaCountBefore) {
-                        error = "Промежуточная точка добавлена."
-                    }
-                }
+                onCameraIdle = { lastMapCenter = it },
+                onMapTap = selectOnMap
             )
         }
         item { Action(if(busy) "Строим по дорожной сети…" else "Построить маршрут", Icons.Default.Route, enabled = !busy) {
@@ -714,6 +737,23 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
             } }
         }
         item { Text("При построении выбранные координаты отправляются на указанный Valhalla backend (${profile.routingBackendUrl}); во время активной навигации текущая позиция может отправляться для автоматического перестроения (не чаще одного запроса за 2 минуты, максимум 3 попытки за пробежку). Тренировки, история и профиль туда не передаются. При отсутствии сети планирование недоступно, но GPS-секундомер и запись продолжаются независимо. Стандартные OSM тайлы нельзя массово скачивать для офлайн-предзагрузки.", style = MaterialTheme.typography.bodySmall) }
+    }
+    if(fullscreenMap) {
+        FullscreenRouteMap(
+            selectedRole = pick,
+            loop = loop,
+            markers = mapMarkers,
+            currentLocation = deviceLocation ?: coordinate(startLat, startLon),
+            initialCenter = lastMapCenter ?: deviceLocation ?: coordinate(startLat, startLon) ?: coordinate(finishLat, finishLon),
+            plannedRoute = route,
+            startSelected = coordinate(startLat, startLon) != null,
+            finishSelected = coordinate(finishLat, finishLon) != null,
+            waypointCount = viaText.split(';').count { it.isNotBlank() },
+            onRoleSelected = { pick = it },
+            onPointSelected = selectOnMap,
+            onCameraIdle = { lastMapCenter = it },
+            onDismiss = { fullscreenMap = false }
+        )
     }
 }
 
