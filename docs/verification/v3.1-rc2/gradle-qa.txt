@@ -10,12 +10,10 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugResources UP-TO-DATE
 > Task :app:packageDebugResources UP-TO-DATE
 > Task :app:parseDebugLocalResources UP-TO-DATE
-> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
-> Task :app:extractDeepLinksDebug UP-TO-DATE
-> Task :app:processDebugMainManifest UP-TO-DATE
-> Task :app:processDebugManifest UP-TO-DATE
-> Task :app:processDebugManifestForPackage UP-TO-DATE
-> Task :app:processDebugResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
 > Task :app:javaPreCompileDebug UP-TO-DATE
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
@@ -42,8 +40,9 @@ Daemon will be stopped at the end of the build
 > Task :app:mapDebugAndroidTestSourceSetPaths UP-TO-DATE
 > Task :app:generateDebugAndroidTestResources UP-TO-DATE
 > Task :app:mergeDebugAndroidTestResources UP-TO-DATE
-> Task :app:processDebugAndroidTestManifest UP-TO-DATE
-> Task :app:processDebugAndroidTestResources UP-TO-DATE
+> Task :app:processDebugAndroidTestManifest
+> Task :app:processDebugManifestForPackage
+> Task :app:processDebugAndroidTestResources
 > Task :app:javaPreCompileDebugAndroidTest UP-TO-DATE
 > Task :app:mergeDebugAndroidTestShaders UP-TO-DATE
 > Task :app:compileDebugAndroidTestShaders NO-SOURCE
@@ -52,6 +51,7 @@ Daemon will be stopped at the end of the build
 > Task :app:compressDebugAndroidTestAssets UP-TO-DATE
 > Task :app:desugarDebugAndroidTestFileDependencies UP-TO-DATE
 > Task :app:checkDebugAndroidTestDuplicateClasses UP-TO-DATE
+> Task :app:processDebugResources
 > Task :app:mergeExtDexDebugAndroidTest UP-TO-DATE
 > Task :app:mergeLibDexDebugAndroidTest UP-TO-DATE
 > Task :app:mergeDebugAndroidTestJniLibFolders UP-TO-DATE
@@ -66,10 +66,10 @@ Daemon will be stopped at the end of the build
 w: file:///home/xatabihc/Projects/FitProgressAI/app/src/main/java/ru/fitprogress/ai/MainActivity.kt:125:331 'val Icons.Filled.DirectionsRun: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.DirectionsRun.
 
 > Task :app:compileDebugJavaWithJavac UP-TO-DATE
-> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:bundleDebugClassesToCompileJar
-> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:kaptGenerateStubsDebugUnitTestKotlin UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
 > Task :app:generateDebugAndroidTestLintModel
 > Task :app:kaptDebugUnitTestKotlin
 > Task :app:generateDebugLintReportModel
@@ -86,25 +86,28 @@ w: file:///home/xatabihc/Projects/FitProgressAI/app/src/main/java/ru/fitprogress
 > Task :app:mergeDebugJavaResource UP-TO-DATE
 > Task :app:mergeProjectDexDebug
 > Task :app:packageDebug
-> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-> Task :app:kaptGenerateStubsDebugAndroidTestKotlin UP-TO-DATE
+> Task :app:kaptGenerateStubsDebugAndroidTestKotlin
+
 > Task :app:kaptDebugAndroidTestKotlin
-> Task :app:compileDebugAndroidTestKotlin UP-TO-DATE
+warning: The following options were not recognized by any processor: '[room.schemaLocation, kapt.kotlin.generated]'
+
+> Task :app:compileDebugAndroidTestKotlin
 > Task :app:compileDebugAndroidTestJavaWithJavac NO-SOURCE
-> Task :app:dexBuilderDebugAndroidTest UP-TO-DATE
+> Task :app:dexBuilderDebugAndroidTest
 > Task :app:mergeDebugAndroidTestGlobalSynthetics UP-TO-DATE
 > Task :app:processDebugAndroidTestJavaRes UP-TO-DATE
 > Task :app:mergeDebugAndroidTestJavaResource UP-TO-DATE
-> Task :app:mergeProjectDexDebugAndroidTest UP-TO-DATE
-> Task :app:packageDebugAndroidTest UP-TO-DATE
-> Task :app:createDebugAndroidTestApkListingFileRedirect UP-TO-DATE
-> Task :app:assembleDebugAndroidTest UP-TO-DATE
+> Task :app:mergeProjectDexDebugAndroidTest
+> Task :app:packageDebugAndroidTest
+> Task :app:createDebugAndroidTestApkListingFileRedirect
+> Task :app:assembleDebugAndroidTest
 
 > Task :app:lintReportDebug
 Wrote HTML report to file:///home/xatabihc/Projects/FitProgressAI/app/build/reports/lint-results-debug.html
 
 > Task :app:lintDebug
 
-BUILD SUCCESSFUL in 2m 3s
-83 actionable tasks: 18 executed, 65 up-to-date
+BUILD SUCCESSFUL in 2m 6s
+83 actionable tasks: 33 executed, 50 up-to-date

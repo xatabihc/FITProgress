@@ -1,0 +1,9 @@
+{
+  "gps_foreground_service_lifecycle_passed": true,
+  "original_location_enabled": false,
+  "original_location_state_restored": true,
+  "production_history_modified": false,
+  "mock_provider_used": false,
+  "outdoor_route_accuracy_tested": false,
+  "lock_screen_doze_tested": false
+}

@@ -1,0 +1,12 @@
+{
+  "package": "ru.fitprogress.ai",
+  "old_version_code": 6,
+  "candidate_version_code": 8,
+  "ci_run_id": 42224713180,
+  "installed_signer_sha256": "a0d1b995b485830952b04397da26ab4769933155242bb87b25a45b5f1e461a2e",
+  "candidate_signer_sha256": "3ecfba7bca6ee9a070e4ef60b6e9d712409712a7c7d780dfada294f1dc8db2ee",
+  "compatibility": "blocked_signer_mismatch",
+  "install_attempted": false,
+  "uninstall_attempted": false,
+  "original_user_data_modified": false
+}

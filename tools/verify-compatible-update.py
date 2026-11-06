@@ -102,7 +102,8 @@ def main():
     passed = []
     nodes = window()
     for label in ('Упражнения', 'План', 'Бег', 'Прогресс', 'Главная'):
-        target = next(n for n in nodes if n.get('package') == PACKAGE and n.get('content-desc') == label)
+        target = next((n for n in nodes if n.get('package') == PACKAGE and n.get('content-desc') == label), None)
+        assert target is not None, 'Tab accessibility selector unavailable; UI smoke is not attested'
         x1, y1, x2, y2 = map(int, re.findall(r'\d+', target.get('bounds')))
         run(adb + ['shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2)])
         nodes = window(); passed.append(label)

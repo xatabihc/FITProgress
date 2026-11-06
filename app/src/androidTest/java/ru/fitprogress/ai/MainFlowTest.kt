@@ -29,16 +29,21 @@ class MainFlowTest {
         RunService.launch.idle()
         ui.waitForIdle()
     }
+    private fun awaitExerciseIndex(name: String) {
+        lateinit var vm: FitViewModel
+        ui.runOnIdle { vm = androidx.lifecycle.ViewModelProvider(ui.activity)[FitViewModel::class.java] }
+        ui.waitUntil(10000) { vm.exerciseSearch.value.filter(name).any { it.name == name } }
+    }
     private fun scroll(text: String) { ui.onNodeWithTag("page").performScrollToNode(hasText(text, substring = false)) }
     @Test fun createAndRenameExercise() {
         ui.onNodeWithContentDescription(ui.activity.getString(R.string.nav_catalog), useUnmergedTree = true).performClick()
         scroll("Создать упражнение"); ui.onNodeWithText("Создать упражнение").performClick()
         scroll("Название"); ui.onNodeWithText("Название").performTextInput("Мой присед")
         scroll("Сохранить упражнение"); ui.onNodeWithText("Сохранить упражнение").performClick(); ui.waitForIdle()
-        scroll("Мой присед"); ui.onNodeWithText("Мой присед").performClick()
+        awaitExerciseIndex("Мой присед"); scroll("Мой присед"); ui.onNodeWithText("Мой присед").performClick()
         scroll("Название"); ui.onNodeWithText("Название").performTextReplacement("Присед с паузой")
         scroll("Сохранить упражнение"); ui.onNodeWithText("Сохранить упражнение").performClick(); ui.waitForIdle()
-        scroll("Присед с паузой"); ui.onNodeWithText("Присед с паузой").assertIsDisplayed()
+        awaitExerciseIndex("Присед с паузой"); scroll("Присед с паузой"); ui.onNodeWithText("Присед с паузой").assertIsDisplayed()
     }
     @Test fun createExecuteSaveAndReopenWorkout() {
         scroll("Создать тренировку"); ui.onNodeWithText("Создать тренировку").performClick(); ui.waitForIdle()
@@ -124,6 +129,20 @@ class MainFlowTest {
             repeat(2) { ui.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; ui.waitForIdle() }
             ui.onNodeWithText("Бег в твоём ритме").assertIsDisplayed()
         }
+    }
+
+    @Test fun dailyStatisticsExcludeYesterdaysCompletedWorkout() {
+        val app = ui.activity.application as FitApp
+        val today = java.time.LocalDate.now()
+        fun result(day: java.time.LocalDate): Workout {
+            val end = day.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + 7200000
+            return Workout(name = "QA day boundary", date = day.toString(), status = "done", started = end - 60000, ended = end, accumulatedMs = 60000)
+        }
+        runBlocking { app.repository.restore(BackupCodec.decode(BackupCodec.encode(Backup(workouts = listOf(result(today), result(today.minusDays(1))))))) }
+        ui.onNodeWithContentDescription(ui.activity.getString(R.string.nav_progress), useUnmergedTree = true).performClick()
+        ui.onNodeWithText("День").performClick().assertIsSelected()
+        ui.onNodeWithText("1", substring = false).assertIsDisplayed()
+        ui.onNodeWithText("2", substring = false).assertDoesNotExist()
     }
 
 }

@@ -65,4 +65,15 @@ class ViewModelStateTest {
         assertTrue(vm.busy.value); gate.complete(Unit)
         withTimeout(10000) { vm.busy.first { !it } }; assertEquals(1, calls)
     }
+    @Test fun backgroundSearchIndexIncludesCreatedAndRenamedExercises() = runBlocking {
+        val exercise = Exercise(name = "QA_idx_before_019362")
+        repo.save(exercise)
+        withTimeout(10000) { vm.exerciseSearch.first { index -> index.filter(exercise.name).any { it.id == exercise.id } } }
+        val renamed = exercise.copy(name = "QA_idx_after_019362")
+        repo.save(renamed)
+        val latest = withTimeout(10000) { vm.exerciseSearch.first { index -> index.filter(renamed.name).any { it.id == exercise.id } } }
+        assertTrue(latest.filter(exercise.name).none { it.id == exercise.id })
+        assertEquals(renamed, latest.filter(renamed.name).single { it.id == exercise.id })
+    }
+
 }

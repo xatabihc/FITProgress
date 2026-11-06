@@ -7,23 +7,13 @@
   },
   "lint": {
     "Error": 0,
-    "Warning": 62,
+    "Warning": 61,
     "Information": 1
   },
-  "lint_ids": {
-    "UnusedAttribute": 1,
-    "GradleDependency": 14,
-    "ModifierParameter": 2,
-    "LogNotTimber": 26,
-    "DataExtractionRules": 1,
-    "KaptUsageInsteadOfKsp": 1,
-    "AutoboxingStateCreation": 1,
-    "UnusedResources": 14,
-    "UseKtx": 3
-  },
   "clean_build": true,
-  "android_passed": 38,
-  "android_skipped": 2,
+  "android_passed": 40,
+  "android_skipped_in_general_suite": 2,
   "android_failed": 0,
-  "qa_update_persistence_passed": true
+  "gps_service_lifecycle_passed_separately": true,
+  "update_persistence_passed_separately": true
 }

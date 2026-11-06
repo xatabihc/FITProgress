@@ -1,0 +1,23 @@
+{
+  "package": "ru.fitprogress.ai.qa",
+  "old_package_unchanged": true,
+  "all_source_user_rows_copied_and_preserved_after_ui": true,
+  "sqlite_integrity_verified": true,
+  "target_was_verified_empty_before_copy": true,
+  "empty_target_archived_for_rollback": true,
+  "profile_copied": true,
+  "user_text_published": false,
+  "external_image_uri_grants_copied": false,
+  "real_gps_route_tested": false,
+  "visual_smoke_completed": [
+    "home",
+    "catalog",
+    "calendar",
+    "running",
+    "stats"
+  ],
+  "catalog_first_transition_under_review": false,
+  "all_rows_preserved_after_final_qa_install_r_and_ui": true,
+  "visual_checks_are_not_latency_benchmarks": true,
+  "final_apk_sha256": "3a5dbd3d462090a8b6234aaca56a014da04bb6b52b3b40e0f7a1867a752ea6fa"
+}

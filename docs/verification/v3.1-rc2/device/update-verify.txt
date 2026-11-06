@@ -15,7 +15,7 @@ INSTRUMENTATION_STATUS: test=isolatedHistoryAcrossApkUpdate
 INSTRUMENTATION_STATUS_CODE: 0
 INSTRUMENTATION_RESULT: stream=
 
-Time: 0,038
+Time: 0,04
 
 OK (1 test)
 

@@ -196,7 +196,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         "cardio" to stringResource(R.string.exercise_type_cardio),
         "stretching" to stringResource(R.string.exercise_type_stretching)
     )
-    val search = remember(exercises) { ExerciseSearchIndex(exercises) }
+    val search by vm.exerciseSearch.collectAsStateWithLifecycle()
     val equipmentOptions = remember(exercises) { listOf("Любое") + exercises.map { it.equipment }.distinct().sorted() }
     val levelOptions = listOf("Любой", "Начинающий", "Средний", "Продвинутый", "Не указан источником")
     val matches = remember(search, query, category, equipment, level, type, origin) { search.filter(query, category, equipment, level, type, origin) }
@@ -811,7 +811,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 @Composable fun StatsScreen(vm: FitViewModel, detailed: () -> Unit) {
     val all by vm.workouts.collectAsStateWithLifecycle(); val runs by vm.runs.collectAsStateWithLifecycle(); val exercises by vm.exercises.collectAsStateWithLifecycle()
     var period by rememberSaveable { mutableStateOf("Месяц") }; var exerciseId by rememberSaveable { mutableStateOf("") }
-    val since = when(period) { "Неделя" -> LocalDate.now().minusDays(6); "Месяц" -> LocalDate.now().minusMonths(1); "3 месяца" -> LocalDate.now().minusMonths(3); "Год" -> LocalDate.now().minusYears(1); else -> LocalDate.MIN }
+    val since = when(period) { "День" -> LocalDate.now(); "Неделя" -> LocalDate.now().minusDays(6); "Месяц" -> LocalDate.now().minusMonths(1); "3 месяца" -> LocalDate.now().minusMonths(3); "Год" -> LocalDate.now().minusYears(1); else -> LocalDate.MIN }
     val done = all.filter { it.status == "done" && it.completedDate() >= since }; val realRuns = runs.filter { it.status == "done" && !it.demo && Instant.ofEpochMilli(it.started).atZone(ZoneId.systemDefault()).toLocalDate() >= since }
     val gpsDistance = realRuns.filter { it.recordingMode == "gps" }.sumOf { it.distance }; val manualDistance = realRuns.filter { it.recordingMode == "manual" }.sumOf { it.distance }
     val duration = done.sumOf { it.accumulatedMs } + realRuns.sumOf { it.accumulatedMs }; val distance = realRuns.sumOf { it.distance }
@@ -820,7 +820,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
     Page {
         item { Action("Расширенная аналитика", Icons.Default.Insights) { detailed() } }
         item { Title("Твой прогресс", "Только сохранённые результаты · демо исключено") }
-        item { Choice(listOf("Неделя", "Месяц", "3 месяца", "Год", "Всё время"), period) { period = it } }
+        item { Choice(listOf("День", "Неделя", "Месяц", "3 месяца", "Год", "Всё время"), period) { period = it } }
         item { Panel { Metric("Всего занятий", (done.size + realRuns.size).toString()); Metric("Общая продолжительность", formatTime(duration)); Metric("Силовой объём", "%.0f кг".format(done.sumOf { it.volume() })); Metric("Километраж", "%.2f км".format(distance / 1000)); Text("GPS: %.2f км · вручную: %.2f км".format(gpsDistance / 1000, manualDistance / 1000)); Text("Средний темп: ${formatPace(Gps.pace(distance, realRuns.sumOf { it.accumulatedMs }))}"); val activeDays = (done.map { it.completedDate().toString() } + realRuns.map { Instant.ofEpochMilli(it.started).atZone(ZoneId.systemDefault()).toLocalDate().toString() }).distinct().size; Text("Дней с занятиями: $activeDays") } }
         if(done.isEmpty() && realRuns.isEmpty()) item { Empty("В выбранном периоде результатов нет. Завершите тренировку или пробежку.") }
         item { Panel { LineChart(months.map { m -> (done.count { YearMonth.from(it.completedDate()) == m } + realRuns.count { YearMonth.from(Instant.ofEpochMilli(it.started).atZone(ZoneId.systemDefault())) == m }).toDouble() }, "Частота занятий по месяцам"); Text(months.joinToString(" · ") { it.monthValue.toString() }, style = MaterialTheme.typography.labelSmall) } }

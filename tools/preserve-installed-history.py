@@ -56,26 +56,58 @@ def main():
             original.backup(output)
         original.close(); snapshot.chmod(0o600)
     copied = False
-    exists = call(['shell', 'run-as', TARGET, 'test', '-e', 'databases/fitprogress.db'], required=False) if args.copy_to_empty_qa else None
-    reason = 'unfinished_source_sessions' if has_open_session else 'target_store_exists' if exists is not None and exists.returncode == 0 else None
+    reason = 'unfinished_source_sessions' if has_open_session else None
+    archive = None
     if args.copy_to_empty_qa and reason is None:
-        assert not has_open_session, 'Unfinished source sessions exist; private snapshot saved, automatic copy refused'
         idle(TARGET)
-        assert exists.returncode == 1, 'QA production database already exists; refusing to overwrite'
-        call(['shell', 'run-as', TARGET, 'mkdir', '-p', 'databases'])
-        content = snapshot.read_bytes()
-        call(['exec-in', 'run-as', TARGET, 'dd', 'of=databases/fitprogress-transfer.db', 'bs=8192'], content)
-        call(['shell', 'run-as', TARGET, 'chmod', '600', 'databases/fitprogress-transfer.db'])
-        digest = call(['shell', 'run-as', TARGET, 'sha256sum', 'databases/fitprogress-transfer.db']).stdout.decode().split()[0]
-        assert digest == hashlib.sha256(content).hexdigest(), 'Transfer verification failed'
-        idle(TARGET)
-        # A hard link is atomic and fails if the destination appears; no existing history is overwritten.
-        call(['shell', 'run-as', TARGET, 'ln', 'databases/fitprogress-transfer.db', 'databases/fitprogress.db'])
-        call(['shell', 'run-as', TARGET, 'rm', 'databases/fitprogress-transfer.db'])
-        copied = True
+        # Only the new QA package. Freeze its idle process so scheduled jobs cannot reopen SQLite.
+        call(['shell', 'am', 'force-stop', TARGET])
+        exists = call(['shell', 'run-as', TARGET, 'test', '-e', 'databases/fitprogress.db'], required=False)
+        assert exists.returncode in (0, 1), 'Cannot inspect QA database'
+        target_files = []
+        if exists.returncode == 0:
+            with tempfile.TemporaryDirectory(prefix='qa-empty-', dir=folder) as temp:
+                target_dir = Path(temp)
+                for name in ['fitprogress.db', 'fitprogress.db-wal', 'fitprogress.db-journal', 'fitprogress.db-shm']:
+                    present = call(['shell', 'run-as', TARGET, 'test', '-e', 'databases/' + name], required=False)
+                    assert present.returncode in (0, 1)
+                    if present.returncode == 0:
+                        target_files.append(name)
+                        (target_dir / name).write_bytes(call(['exec-out', 'run-as', TARGET, 'cat', 'databases/' + name]).stdout)
+                with sqlite3.connect(target_dir / 'fitprogress.db') as target_db:
+                    assert target_db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+                    assert target_db.execute('SELECT identity_hash FROM room_master_table WHERE id=42').fetchone()[0] == schema['identityHash']
+                    empty = all(target_db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0] == 0 for table in ['exercises', 'workouts', 'runs', 'personal_records'])
+                    if not empty:
+                        reason = 'target_store_has_user_rows'
+                    else:
+                        empty_backup = snapshot.with_name(snapshot.stem + '-qa-empty.sqlite')
+                        with sqlite3.connect(empty_backup) as backup_db:
+                            target_db.backup(backup_db)
+                        empty_backup.chmod(0o600)
+        if reason is None:
+            call(['shell', 'run-as', TARGET, 'mkdir', '-p', 'databases'])
+            content = snapshot.read_bytes()
+            call(['exec-in', 'run-as', TARGET, 'dd', 'of=databases/fitprogress-transfer.db', 'bs=8192'], content)
+            call(['shell', 'run-as', TARGET, 'chmod', '600', 'databases/fitprogress-transfer.db'])
+            digest = call(['shell', 'run-as', TARGET, 'sha256sum', 'databases/fitprogress-transfer.db']).stdout.decode().split()[0]
+            assert digest == hashlib.sha256(content).hexdigest(), 'Transfer verification failed'
+            idle(TARGET)
+            # Only a verified empty store is archived. Nonempty stores are never replaced.
+            if target_files:
+                archive = 'databases/empty-before-transfer-' + os.urandom(8).hex()
+                call(['shell', 'run-as', TARGET, 'mkdir', archive])
+                call(['shell', 'run-as', TARGET, 'chmod', '700', archive])
+                for name in target_files:
+                    call(['shell', 'run-as', TARGET, 'mv', 'databases/' + name, archive + '/' + name])
+            # Android SELinux denies hard links here; a no-clobber rename retains the same safety guard.
+            call(['shell', 'run-as', TARGET, 'mv', '-n', 'databases/fitprogress-transfer.db', 'databases/fitprogress.db'])
+            final_digest = call(['shell', 'run-as', TARGET, 'sha256sum', 'databases/fitprogress.db']).stdout.decode().split()[0]
+            assert final_digest == hashlib.sha256(content).hexdigest(), 'Existing QA store retained; transfer not applied'
+            copied = True
     print(json.dumps({'private_snapshot': str(snapshot), 'integrity_verified': True,
                       'original_data_modified': False, 'copied_to_empty_qa': copied,
-                      'profile_and_external_image_permissions_copied': False, 'copy_skipped_reason': reason}, ensure_ascii=False, indent=2))
+                      'profile_and_external_image_permissions_copied': False, 'copy_skipped_reason': reason, 'empty_qa_store_archived': archive is not None}, ensure_ascii=False, indent=2))
 
 if __name__ == '__main__':
     main()

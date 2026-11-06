@@ -1,6 +1,6 @@
 {
   "package": "ru.fitprogress.ai.qa",
-  "sha256": "b560b47ea70ee563cc9504bbaaefb377b8ee3bef53b73eef7776ebaeed652168",
+  "sha256": "3a5dbd3d462090a8b6234aaca56a014da04bb6b52b3b40e0f7a1867a752ea6fa",
   "suite_passed": true,
   "update_marker_preserved": true,
   "production_package_modified": false,
@@ -11,10 +11,10 @@
   ],
   "real_gps_route_tested": false,
   "junit_summary": [
-    "OK (40 tests)"
+    "OK (42 tests)"
   ],
   "method_status_counts": {
-    "0": 38,
+    "0": 40,
     "-1": 0,
     "-2": 0,
     "-3": 0,

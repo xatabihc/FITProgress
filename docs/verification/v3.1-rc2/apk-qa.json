@@ -3,8 +3,8 @@
   "versionName": "3.1-rc2",
   "versionCode": 8,
   "apk": "artifacts/FitProgress-3.1-rc2-QA.apk",
-  "bytes": 112688962,
-  "sha256": "b560b47ea70ee563cc9504bbaaefb377b8ee3bef53b73eef7776ebaeed652168",
+  "bytes": 110079948,
+  "sha256": "3a5dbd3d462090a8b6234aaca56a014da04bb6b52b3b40e0f7a1867a752ea6fa",
   "signer_sha256": [
     "2a8cc13cdcea8733f01443195c7269f064da980c4726a9dee5d72061fc03fcef"
   ],

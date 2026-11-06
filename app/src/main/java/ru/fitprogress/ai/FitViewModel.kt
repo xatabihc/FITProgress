@@ -18,6 +18,9 @@ class FitViewModel @JvmOverloads constructor(app: Application, val repo: Reposit
         loadFailure.value = "Не удалось прочитать локальные данные (${error.javaClass.simpleName}). История не удалялась. Закройте приложение и перезапустите его."
     }
     val exercises = repo.exercises.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, Catalog.exercises)
+    // Folding names, aliases and complete guides for the whole catalog must not delay a tap.
+    val exerciseSearch = exercises.map { ExerciseSearchIndex(it) }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ExerciseSearchIndex(Catalog.exercises))
     val workouts = repo.workouts.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val runs = repo.runs.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val personalData = repo.personalData.reportReadFailures().stateIn(viewModelScope, SharingStarted.Eagerly, PersonalState())
