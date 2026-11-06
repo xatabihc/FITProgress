@@ -79,8 +79,9 @@ private object MapHttp {
             map = m
             mapReady = true
             m.addOnCameraIdleListener {
-                val center = m.cameraPosition.target
-                cameraIdle.value(RouteCoordinate(center.latitude, center.longitude))
+                m.cameraPosition.target?.let { center ->
+                    cameraIdle.value(RouteCoordinate(center.latitude, center.longitude))
+                }
             }
             m.addOnMapClickListener { point ->
                 if(selection.value) {
