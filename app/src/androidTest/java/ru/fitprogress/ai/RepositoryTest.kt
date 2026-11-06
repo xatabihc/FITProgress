@@ -161,4 +161,15 @@ class RepositoryTest {
         assertEquals(saved, repo.workouts.first().single())
     }
 
+
+    @Test fun programDuplicateRefusedAtomicallyWithoutChangingHistoryOrAddingExercises() = runBlocking {
+        val original = Workout(name = "Одинаковое занятие", date = "2026-11-02")
+        repo.saveImportedProgram(emptyList(), listOf(original))
+        val incomingExercise = Exercise(name = "Не должен сохраниться")
+        val result = runCatching { repo.saveImportedProgram(listOf(incomingExercise),
+            listOf(original.copy(id = newId(), items = listOf(Training.item(incomingExercise)))) ) }
+        assertTrue(result.isFailure)
+        assertEquals(listOf(original), repo.workouts.first())
+        assertFalse(repo.exercises.first().any { it.id == incomingExercise.id })
+    }
 }

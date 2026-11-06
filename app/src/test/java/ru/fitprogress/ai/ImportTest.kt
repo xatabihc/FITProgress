@@ -74,4 +74,21 @@ class ImportTest {
         assertEquals(day.items.single().sets.first().reps, copy.days.single().items.single().sets.first().reps)
     }
 
+
+    @Test fun preservesProgramAndActualCompletionDateAcrossBackup() {
+        val text = row(extra = ",\"programId\":\"source-program\",\"startedAt\":\"2026-11-05T10:00:00Z\",\"completedAt\":\"2026-11-05T11:00:00Z\",\"durationMs\":3600000")
+        val w = WorkoutImport.parse("[$text]", Catalog.exercises).backup.workouts.single()
+        assertEquals("source-program", w.program)
+        assertEquals(java.time.LocalDate.parse("2026-11-05"), w.completedDate(java.time.ZoneOffset.UTC))
+        assertEquals(3600000L, w.accumulatedMs)
+        assertEquals(w, BackupCodec.decode(BackupCodec.checkedExport(Backup(workouts = listOf(w)))).workouts.single())
+    }
+    @Test fun invalidCompletionMarkersAndInvertedTimesAreReported() {
+        for(invalid in listOf(row().replace("\"done\":true", "\"done\":\"unknown\""),
+            row(extra = ",\"started\":2000,\"ended\":1000"))) {
+            val preview = WorkoutImport.parse("[${row()},${invalid.replace("source-1", "bad-id")}]", Catalog.exercises)
+            assertEquals(1, preview.skipped); assertEquals(1, preview.issues.size)
+            assertEquals(1, preview.backup.workouts.size)
+        }
+    }
 }

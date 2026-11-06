@@ -19,6 +19,17 @@ object WorkoutImport {
     private fun JsonObject.text(vararg keys: String) = field(*keys)?.asString?.trim()
     private fun JsonObject.number(vararg keys: String) = text(*keys)?.replace(',', '.')?.toDouble()?.also { require(it.isFinite()) }
     private fun JsonObject.integer(vararg keys: String): Int? = number(*keys)?.let { require(it % 1.0 == 0.0 && it in 0.0..Int.MAX_VALUE.toDouble()); it.toInt() }
+    private fun JsonObject.timestamp(vararg keys: String): Long {
+        val value = field(*keys) ?: return 0
+        val raw = value.asString
+        return if(raw.matches(Regex("[0-9]+"))) raw.toLong().also { require(it >= 0) }
+        else Instant.parse(raw).toEpochMilli().also { require(it >= 0) }
+    }
+    private fun JsonObject.completed(): Boolean = when(val value = field("done", "completed", "выполнен")?.asString?.lowercase(Locale.ROOT)) {
+        null, "false" -> false
+        "true" -> true
+        else -> error("непонятная отметка выполнения: $value")
+    }
     fun normalize(name: String) = name.trim().lowercase(Locale.ROOT).replace('ё', 'е').replace(Regex("\\s+"), " ")
     fun parse(text: String, catalog: List<Exercise>, mapping: Map<String, String> = emptyMap()): WorkoutImportPreview {
         require(text.toByteArray(Charsets.UTF_8).size <= 20_000_000) { "Файл больше 20 МБ" }
@@ -67,7 +78,8 @@ object WorkoutImport {
                         require(reps != null || seconds != null || distance != null) { "нет результата или плана подхода у «$title»" }
                         SetEntry(id = stable("$id:$itemIndex:$setIndex"), reps = reps ?: 0,
                             weight = set.number("weight", "weightKg", "вес") ?: 0.0, seconds = seconds ?: 0,
-                            distanceMeters = distance ?: 0.0, done = set.field("done", "completed", "выполнен")?.asBoolean ?: false,
+                            distanceMeters = distance ?: 0.0, done = set.completed(),
+                            rpe = set.integer("rpe"), rir = set.integer("rir"),
                             restSeconds = set.integer("restSeconds", "rest"), comment = set.text("comment", "notes") ?: "").also(SessionEdits::validate)
                     }
                     WorkoutItem(id = stable("$id:item:$itemIndex"), exerciseId = exerciseId, name = title, sets = entries,
@@ -76,7 +88,12 @@ object WorkoutImport {
                 }
                 val duration = row.number("accumulatedMs", "durationMs") ?: 0.0
                 require(duration in 0.0..604800000.0 && duration % 1.0 == 0.0) { "некорректная длительность" }
+                val started = row.timestamp("started", "startedAt", "startedMs")
+                val ended = row.timestamp("ended", "completedAt", "endedMs")
+                require(ended == 0L || started == 0L || ended >= started) { "завершение раньше начала" }
                 val w = Workout(id = id, name = name, date = date.toString(), status = status, items = items,
+                    started = started, ended = ended,
+                    program = row.text("programId", "programName", "program") ?: "",
                     accumulatedMs = duration.toLong(), notes = listOfNotNull(row.text("notes", "comment"),
                         "Импорт JSON: отсутствующие числа отображаются как 0; подходы без явной отметки выполнения не считаются выполненными. Активная запись переносится на паузе.").joinToString("\n"))
                 BackupCodec.validateWorkout(w)

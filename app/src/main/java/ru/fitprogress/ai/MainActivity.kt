@@ -465,8 +465,11 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
         AlertDialog(onDismissRequest = { imported = null }, title = { Text("Проверка импорта") }, text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("${p.name} · ${p.weeks} нед. · ${p.days.size} занятий · ${p.days.sumOf { it.exercises.size }} назначений упражнений")
+                val distances = p.days.sumOf { day -> day.exercises.count { it.distanceMeters > 0 || it.setDetails.any { set -> set.distanceMeters > 0 } } }
+                val perSet = p.days.sumOf { day -> day.exercises.count { it.setDetails.isNotEmpty() } }
+                Text("Дистанция в ${distances} назначениях, отдельные параметры подходов в ${perSet}.", style = MaterialTheme.typography.bodySmall)
                 Field("Начало первой недели (понедельник)", importStart, { importStart = it })
-                Text("Каждое назначение будет сопоставлено со встроенным упражнением либо выбрано вручную. Добавленные занятия можно редактировать в календаре.", style = MaterialTheme.typography.bodySmall)
+                Text("Импорт сохраняет плановые подходы, дистанцию, время и исходную цель, если они есть в JSON. Фактическая история выполненных занятий автоматически не восстанавливается.", style = MaterialTheme.typography.bodySmall)
                 p.days.take(12).forEach { day -> Text("Неделя ${day.week} · ${day.weekday}: ${day.title.ifBlank { "занятие" }} — ${day.exercises.joinToString { "${it.name} (${it.sets}×${it.reps}${if(it.seconds > 0) ", ${it.seconds} сек" else ""})" }}", style = MaterialTheme.typography.bodySmall) }
                 if(p.days.size > 12) Text("…ещё ${p.days.size - 12} занятий")
                 unresolved.forEach { name -> TextButton(onClick = { mappingChooser = name; mappingQuery = name }) { Text("Сопоставить «$name» → выбрать упражнение") } }
@@ -494,7 +497,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
                     val canonical = mapping[e.name]?.let { mappedName -> allExercises.first { it.name == mappedName } }
                         ?: allExercises.firstOrNull { it.name.equals(e.name, true) }
                         ?: requireNotNull(newlyCreated[e.name]) { "Упражнение не сопоставлено: ${e.name}" }
-                    WorkoutItem(exerciseId = canonical.id, name = canonical.name, sets = List(e.sets) { SetEntry(reps = e.reps, weight = e.weightKg, seconds = e.seconds) }, rest = e.restSeconds, muscleGroup = canonical.category)
+                    ProgramInterchange.item(e, canonical)
                 }
                 Workout(name = "${p.name} · неделя ${d.week} · ${d.title.ifBlank { "занятие" }}", date = date.toString(), items = items, program = planId, notes = "Импортирована пользователем · ${p.direction} · ${p.level}")
             }
@@ -848,7 +851,7 @@ fun statusLabel(w: Workout) = if(w.plan != null) "Программа" else if(w.
 @Composable fun SettingsScreen(vm: FitViewModel, importWorkouts: () -> Unit = {}) {
     val p by vm.profile.collectAsStateWithLifecycle(); val context = LocalContext.current
     var name by rememberSaveable(p.name) { mutableStateOf(p.name) }; var level by rememberSaveable(p.level) { mutableStateOf(p.level) }; var goals by rememberSaveable(p.goals) { mutableStateOf(p.goals) }; var activities by rememberSaveable(p.activities) { mutableStateOf(p.activities) }; var rest by rememberSaveable(p.rest) { mutableStateOf(p.rest.toString()) }; var routingUrl by rememberSaveable(p.routingBackendUrl) { mutableStateOf(p.routingBackendUrl) }
-    var delete by remember { mutableStateOf(false) }; var importData by remember { mutableStateOf<Backup?>(null) }; var importCount by remember { mutableStateOf(0) }
+    var delete by remember { mutableStateOf(false) }; var importData by remember { mutableStateOf<Backup?>(null) }; var importCount by remember { mutableIntStateOf(0) }
     val jsonExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri != null) vm.exclusive {
         val snapshot = vm.repo.snapshot(); val text = withContext(Dispatchers.Default) { BackupCodec.checkedExport(snapshot) }; withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(text) } ?: error("Файл недоступен для записи") }; vm.notify("JSON сохранён")
     } }

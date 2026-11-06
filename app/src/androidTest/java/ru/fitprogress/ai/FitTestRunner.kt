@@ -11,8 +11,10 @@ class FitTestApplication : FitApp() {
         registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) {
                 // Test windows only: no changes to the user's global screen timeout or lock settings.
-                activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                activity.setTurnScreenOn(true)
+                if(androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("gpsEndurance") != "true") {
+                    activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    activity.setTurnScreenOn(true)
+                }
             }
             override fun onActivityStarted(activity: android.app.Activity) {}
             override fun onActivityResumed(activity: android.app.Activity) {}

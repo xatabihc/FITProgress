@@ -178,7 +178,7 @@ class RunService : Service() {
     private fun requestAutomaticReroute(run: Run, oldRoute: NavigationRoute, from: RouteCoordinate) {
         if(!rerouteGate.tryBegin(android.os.SystemClock.elapsedRealtime())) return
         val destination = oldRoute.points.lastOrNull() ?: run { rerouteGate.finish(); return }
-        Log.i("FitRunNavigation", "Automatic reroute requested run=${run.id} route=${oldRoute.id}")
+        Log.i("FitRunNavigation", "Automatic reroute requested")
         scope.launch {
             try {
                 val profile = repo.profile.first()
@@ -192,7 +192,7 @@ class RunService : Service() {
                         val updated = route.copy(name = "Перестроенный · ${RouteMode.valueOf(oldRoute.mode).label}")
                         current = latest.copy(navigation = updated); repo.saveRun(current!!); deviationMonitor.reset()
                         signal.value = "Маршрут перестроен · %.2f км осталось".format(updated.distanceMeters / 1000)
-                        Log.i("FitRunNavigation", "Automatic reroute applied run=${run.id} distance=${updated.distanceMeters.toInt()}m")
+                        Log.i("FitRunNavigation", "Automatic reroute applied")
                     }
                 }
             } catch(e: CancellationException) { rerouteGate.finish(); throw e }

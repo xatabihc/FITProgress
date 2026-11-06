@@ -59,6 +59,11 @@ class Repository(private val db: FitDatabase, private val context: Context) {
         require(newExercises.map { it.id }.distinct().size == newExercises.size)
         require(sessions.map { it.id }.distinct().size == sessions.size)
         db.withTransaction {
+            val existing = dao.allWorkouts().map { gson.fromJson(it.payload, Workout::class.java) }
+                .map { it.date to it.name }.toHashSet()
+            require(sessions.none { (it.date to it.name) in existing }) {
+                "Эта программа уже есть в календаре на выбранные даты. Повторный импорт создаст дубликаты."
+            }
             newExercises.forEach { exercise ->
                 BackupCodec.validateExercise(exercise)
                 require(!exercise.builtIn)
